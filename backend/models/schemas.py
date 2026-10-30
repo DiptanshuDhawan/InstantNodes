@@ -1,10 +1,11 @@
-from pydantic import BaseModel
-from typing import Optional, List
-from datetime import datetime
+"""API response models for the native NetSimX runtime."""
+
+from typing import List, Optional
+
+from pydantic import BaseModel, Field
 
 
 class LabSummary(BaseModel):
-    """Returned when listing all labs on the dashboard."""
     id: int
     slug: str
     title: str
@@ -14,13 +15,26 @@ class LabSummary(BaseModel):
     estimated_time_minutes: int
 
 
-class TaskResult(BaseModel):
-    task_id: int
-    description: str
-    points_possible: int
-    points_earned: int
+class NodeStatus(BaseModel):
+    name: str
+    status: str
+    kind: str
+    cli_profile: str
+
+
+class LinkStatus(BaseModel):
+    node_a: str
+    interface_a: str
+    node_b: str
+    interface_b: str
+    status: str
+
+
+class NodeGradeResult(BaseModel):
+    node: str
     passed: bool
-    hint: Optional[str] = None
+    missing_lines: List[str]
+    error: str = ""
 
 
 class GradeReport(BaseModel):
@@ -30,17 +44,26 @@ class GradeReport(BaseModel):
     total_possible: int
     percentage: float
     passed: bool
-    tasks: List[TaskResult]
+    node_results: List[NodeGradeResult]
 
 
 class SessionStartResponse(BaseModel):
     session_id: int
-    gns3_project_id: str
+    runtime_id: str
+    engine: str = "native"
     status: str
+    generation: int
     message: str
+    # Temporary migration alias for clients created before the native runtime.
+    gns3_project_id: Optional[str] = None
 
 
 class SessionStatusResponse(BaseModel):
     session_id: int
+    runtime_id: Optional[str] = None
+    engine: str = "native"
     status: str
-    nodes_ready: bool
+    generation: Optional[int] = None
+    nodes: List[NodeStatus] = Field(default_factory=list)
+    links: List[LinkStatus] = Field(default_factory=list)
+    error: Optional[str] = None
