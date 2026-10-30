@@ -1,119 +1,151 @@
-<div align="center">
-  <img src="docs/banner.svg" alt="InstantNodes Banner" width="100%">
+# NetSimX
 
-  <p>
-    <a href="https://reactjs.org/"><img src="https://img.shields.io/badge/React-20232A?logo=react&logoColor=61DAFB" alt="React"></a>
-    <a href="https://fastapi.tiangolo.com/"><img src="https://img.shields.io/badge/FastAPI-009688?logo=fastapi&logoColor=white" alt="FastAPI"></a>
-    <a href="https://www.python.org/"><img src="https://img.shields.io/badge/Python-3.11+-3776AB?logo=python&logoColor=white" alt="Python"></a>
-    <a href="#quick-start"><img src="https://img.shields.io/badge/Docker-Compose-2496ED?logo=docker&logoColor=white" alt="Docker"></a>
-    <a href="https://github.com/DiptanshuDhawan/NetSimX/commits/main"><img src="https://img.shields.io/github/last-commit/DiptanshuDhawan/NetSimX.svg?style=flat&color=blue" alt="Last Commit"></a>
-    <a href="https://github.com/DiptanshuDhawan/NetSimX/commits/main"><img src="https://img.shields.io/github/commit-activity/m/DiptanshuDhawan/NetSimX.svg?style=flat&color=brightgreen" alt="Commits per month"></a>
-    <br>
-    <a href="https://github.com/DiptanshuDhawan/NetSimX"><img src="https://img.shields.io/github/languages/top/DiptanshuDhawan/NetSimX.svg?style=flat&color=yellow" alt="Top Language"></a>
-    <a href="https://github.com/DiptanshuDhawan/NetSimX"><img src="https://img.shields.io/github/languages/code-size/DiptanshuDhawan/NetSimX.svg?style=flat&color=orange" alt="Code Size"></a>
-    <a href="https://github.com/DiptanshuDhawan/NetSimX"><img src="https://img.shields.io/badge/Maintained%3F-yes-green.svg" alt="Maintained"></a>
-    <a href="#license"><img src="https://img.shields.io/badge/License-MIT-yellow.svg" alt="License: MIT"></a>
-    <a href="https://github.com/DiptanshuDhawan/NetSimX/pulls"><img src="https://img.shields.io/badge/PRs-welcome-brightgreen.svg" alt="PRs Welcome"></a>
-    <a href="#project-status"><img src="https://img.shields.io/badge/Status-Beta-orange.svg" alt="Status"></a>
-  </p>
-</div>
+NetSimX is a browser-based networking lab platform powered by a native, deterministic simulator. It runs without proprietary device images: the backend models a focused Cisco-like command set and network state directly in Python, while the frontend provides lab instructions, topology views, terminals, and grading.
 
----
+> NetSimX is a learning tool, not a device emulator. Its Cisco-like CLI is a deliberately supported subset; it does not run vendor software, perform real packet forwarding, or provide vendor-certified IOS behavior.
 
-## Overview
+## Features
 
-<div align="center">
-  <img src="docs/dashboard.png" alt="InstantNodes Dashboard" width="800">
-  <br>
-  <img src="docs/lab_terminal.png" alt="InstantNodes Lab UI with Terminal" width="800">
-</div>
+- **Image-free local setup:** no proprietary network operating-system files or separate emulation server.
+- **Deterministic simulation:** repeatable device configuration, protocol state, reachability, and grading results.
+- **Browser terminal:** interact with modeled routers, switches, and hosts from the lab page.
+- **Guided labs:** YAML-defined objectives, instructions, topology, command references, and checks.
+- **Persistent progress:** SQLite stores lab metadata, session history, and grading results.
 
-Setting up traditional network emulators can be frustrating and time-consuming. InstantNodes solves this by containerizing GNS3 and exposing a React frontend. You supply your own Cisco IOS/IOL images, and the platform handles the rest.
+The supported command and protocol surface is intentionally scoped to the bundled curriculum. It includes Cisco-like user, privileged, global-configuration, interface, line, and router modes; IPv4 interface configuration and basic reachability; VLAN access and trunk configuration; 802.1Q subinterfaces and router-on-a-stick; DHCP; single-area OSPF; NTP hierarchy and authentication; SSH/device-hardening configuration; and LACP EtherChannel state. Unsupported commands return simulator feedback rather than being passed to a real device.
 
-- **Automated Grading Engine**: Configures devices in-browser. The Python backend (using Netmiko) connects via SSH, pulls running configurations, and evaluates them against a known-good solution file.
-- **In-Browser Terminal**: A native `xterm.js` terminal connects to router consoles via WebSockets. No external SSH clients required.
-- **Interactive Topologies**: Dynamic, SVG-based network diagrams that clearly map out VLANs, trunks, and active interfaces.
-- **Local Execution**: The entire stack runs in Docker Compose on your local machine.
+NetSimX currently ships with six labs:
+
+1. Device Hardening & SSH
+2. OSPF Fundamentals
+3. NTP & Clock Synchronization
+4. Router on a Stick I
+5. Router on a Stick II
+6. EtherChannel (LACP)
 
 ## Architecture
 
-InstantNodes runs as three coordinated Docker containers.
+The default deployment contains two application containers:
 
 ```mermaid
-graph TD
-    User([User Browser]) -->|HTTP / WebSocket| Frontend[React & Next.js Frontend]
-    
-    Frontend -->|REST API| Backend[FastAPI Backend]
-    
-    Backend -->|gns3fy API| GNS3[GNS3 Server Container]
-    Backend -->|netmiko SSH| GNS3
-    
-    GNS3 -->|Boots IOS/IOL| Routers((Emulated Devices))
-    
-    Backend -.->|Reads / Writes| DB[(SQLite Database)]
-    Backend -.->|Reads| Labs[YAML Lab Definitions]
+graph LR
+    Browser[Browser] -->|HTTP / WebSocket| Frontend[Next.js frontend :3000]
+    Frontend -->|REST / WebSocket| Backend[FastAPI + native simulator :8000]
+    Backend -->|read-only| Labs[YAML labs]
+    Backend -->|read/write| SQLite[(SQLite named volume)]
 ```
 
-## Quick Start
+Simulator state for an active session is held in backend memory. Durable lab metadata, session records, and grades are stored in SQLite.
+
+## Quick start
 
 ### Prerequisites
 
-- Docker Desktop
-- Cisco IOS/IOL `.bin` or `.image` files
+- Docker Engine or Docker Desktop
+- Docker Compose v2 (`docker compose`)
 
-> **Note:** Cisco images are not distributed with this project. You must supply your own images.
-
-### 1. Clone the repository
+Clone and start the application:
 
 ```bash
 git clone https://github.com/DiptanshuDhawan/NetSimX.git
 cd NetSimX
+docker compose up --build
 ```
 
-### 2. Add your Cisco images
+Open <http://localhost:3000>. The backend remains available at <http://localhost:8000> for browser compatibility. Compose waits for backend readiness before starting the frontend.
 
-Place your images into the `./images` directory at the repository root. This folder is mounted directly into the GNS3 server container.
-
-**Important:** Rename your Layer 3 image to `router.bin` and your Layer 2 image to `switch.bin`.
-
-```
-NetSimX/
-└── images/
-    ├── router.bin
-    └── switch.bin
-```
-
-### 3. Launch the stack
+Useful commands:
 
 ```bash
-docker-compose up -d --build
+docker compose ps
+docker compose logs -f backend frontend
+docker compose down
 ```
 
-The initial run will build the frontend and backend containers. Once complete, the application will be available at `http://localhost:3000`.
+Health endpoints are available at `/health` (compatibility), `/health/live` (process liveness), and `/health/ready` (database access plus loaded labs).
 
-### 4. Shutting down
+## Local development
+
+### Backend
+
+From `backend/`, create a virtual environment and install the direct runtime dependencies:
 
 ```bash
-docker-compose down
+python -m venv .venv
+python -m pip install -r requirements.txt
 ```
-Lab progress and grading history are persisted in a local SQLite database stored in a Docker volume.
 
-## Authoring Labs
+Activate `.venv`, then set the paths and run Uvicorn. For PowerShell:
 
-Labs are defined using YAML and reference configurations. No application code modifications are required to add new labs.
-
+```powershell
+$env:DATABASE_PATH = ".\db\netlabx.db"
+$env:LABS_DIR = "..\labs"
+uvicorn main:app --reload --port 8000
 ```
+
+For a POSIX shell:
+
+```bash
+DATABASE_PATH=./db/netlabx.db LABS_DIR=../labs uvicorn main:app --reload --port 8000
+```
+
+### Frontend
+
+From `frontend/`:
+
+```bash
+npm ci
+npm run dev
+```
+
+The frontend expects the API at `http://localhost:8000` by default. Set `NEXT_PUBLIC_API_URL` when using a different address.
+
+### Checks
+
+```bash
+# Repository root
+docker compose config
+python -m compileall backend
+
+# backend/
+python -m unittest discover -p "test*.py"
+
+# frontend/
+npm run lint
+npm run build
+```
+
+## Authoring labs
+
+Each immediate child of `labs/` is treated as a lab slug and should contain a `lab.yaml` file. A lab definition supplies metadata, neutral node `kind`/`cli_profile` values, links, instructions, tasks, command references, and grading checks. Add one `solution_<node-name>.cfg` for every graded router or switch; host-only nodes may omit a solution file.
+
+```text
 labs/
-└── inter-vlan-routing/
-    ├── lab.yaml        # Topology layout, instructions, and metadata
-    └── solution.cfg    # Reference configuration for the grading engine
+└── example-lab/
+    ├── lab.yaml
+    ├── solution_R1.cfg
+    └── solution_SW1.cfg
 ```
 
-Review the existing examples in the `/labs` directory to use as templates for creating new scenarios.
+Behavioral checks currently support `ping` (an IPv4 target), `ping_node` (a named node's active address), `dhcp` (lease source/network/gateway), `ssh` (policy and exact credentials), and `telnet_refused` (reachable target with an explicit VTY refusal).
 
-## Project Status
+Start from one of the six existing labs, keep the directory name stable, and use only commands and modeled behaviors from the supported subset. Lab metadata is synchronized into SQLite when the backend starts; restart the backend after adding or renaming a lab.
 
-InstantNodes is currently in active beta. The core grading engine, Docker Compose stack, and frontend UI are fully functional. Current work is focused on expanding the built-in lab library to cover the full CCNA 200-301 blueprint.
+## Persistence and migration
+
+Docker Compose stores SQLite in the `netlabx-data` named volume at `/data/netlabx.db`. `docker compose down` retains this volume; `docker compose down -v` permanently removes it. The `labs/` directory is mounted read-only, so containers cannot modify authored lab content.
+
+On startup, the backend safely upgrades an existing database by adding neutral `runtime_id` and `generation` session fields when absent. The legacy project-identifier field remains in the schema for compatibility, but the native runtime does not depend on it. Active native sessions cannot survive a backend process restart, so clearly identified stale native sessions are marked stopped while ambiguous legacy records are left unchanged.
+
+Older checkouts stored `backend/db/netlabx.db` through a host bind mount. Compose now mounts that directory read-only at `/legacy-data`. On the first native startup only, if `/data/netlabx.db` does not yet exist and the legacy file is a valid non-empty SQLite database, the backend copies it through SQLite's backup API, verifies it, and atomically installs it in the named volume. An existing `/data/netlabx.db` is never overwritten, and the legacy source is never modified; keep an external backup until the upgraded history has been verified.
+
+## Limitations
+
+- The simulator implements a documented learning subset, not the full Cisco CLI.
+- Protocol outcomes are modeled deterministically; there is no real packet capture, forwarding plane, hardware timing, or interoperability guarantee.
+- Arbitrary images, vendor extensions, and unsupported protocols cannot be loaded into the native engine.
+- Active terminal/runtime state is ephemeral across backend restarts, although persisted sessions and grading history remain.
+- Results are intended for practice and automated feedback, not vendor certification or production network validation.
 
 ## License
 
