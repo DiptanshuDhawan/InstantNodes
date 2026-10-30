@@ -1,6 +1,91 @@
 import React, { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
+const CheckIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+);
+const CrossIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
+);
+const CircleIcon = () => (
+  <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
+);
+
+function plural(count, word) {
+  return `${count} ${word}${count === 1 ? '' : 's'}`;
+}
+
+// What the grader found missing or wrong for one task (see grading_engine.py).
+function GradeFindings({ findings }) {
+  if (!findings?.length) return null;
+  return (
+    <ul className="nx-findings">
+      {findings.map((finding, index) => (
+        <li key={index} className={`nx-finding nx-finding-${finding.kind || 'config'}`}>
+          <div>
+            {finding.node && <span className="nx-finding-node">{finding.node}</span>}
+            {finding.title && <strong className="nx-finding-title">{finding.title}: </strong>}
+            <span>{finding.message}</span>
+          </div>
+          {finding.expected?.length > 0 && (
+            <>
+              <div className="nx-finding-label">Expected</div>
+              <pre className="nx-finding-code">{finding.expected.join('\n')}</pre>
+            </>
+          )}
+          {finding.found?.length > 0 && (
+            <>
+              <div className="nx-finding-label">Currently configured</div>
+              <pre className="nx-finding-code is-found">{finding.found.join('\n')}</pre>
+            </>
+          )}
+        </li>
+      ))}
+    </ul>
+  );
+}
+
+function TaskGradeStatus({ result, labPassed }) {
+  if (!result) return null;
+  if (labPassed || result.passed) {
+    return <div className="nx-task-status is-passed">Complete</div>;
+  }
+  if (!result.graded) {
+    return <div className="nx-task-status">Not graded</div>;
+  }
+  const issues = result.findings?.length || 0;
+  return (
+    <div className="nx-task-status is-failed">
+      Not complete{issues ? ` · ${plural(issues, 'issue')}` : ''}
+    </div>
+  );
+}
+
+function GradeSummary({ report }) {
+  const summary = report.summary;
+  if (report.passed) {
+    return (
+      <div className="nx-grade-summary is-passed">
+        <strong>All tasks complete.</strong> Score {report.percentage}%.
+      </div>
+    );
+  }
+  if (!summary) {
+    return (
+      <div className="nx-grade-summary is-failed">
+        <strong>Not complete yet.</strong> Your configuration does not match the solution.
+      </div>
+    );
+  }
+  return (
+    <div className="nx-grade-summary is-failed">
+      <strong>Score {report.percentage}%.</strong>{' '}
+      {summary.tasks_passed} of {plural(summary.tasks_graded, 'graded task')} complete.
+      Open a task marked with a cross to see what is missing.
+    </div>
+  );
+}
+
 export default function LabSidebar({ 
   lab, allLabs, slug,
   gradeReport, isGrading,
@@ -53,6 +138,16 @@ export default function LabSidebar({
   const filteredLabs = searchQuery.trim()
     ? sortedLabs.filter(l => l.title.toLowerCase().includes(searchQuery.toLowerCase()))
     : sortedLabs;
+
+  const taskResults = new Map(
+    (gradeReport?.tasks || [])
+      .filter(result => result.id !== null && result.id !== undefined)
+      .map(result => [String(result.id), result])
+  );
+  const otherRequirements = (gradeReport?.tasks || []).find(
+    result => (result.id === null || result.id === undefined) && result.graded && !result.passed
+  );
+  const labPassed = Boolean(gradeReport?.passed);
 
   return (
     <aside className="nx-sidebar-left nx-card" ref={sidebarRef}>
@@ -114,26 +209,26 @@ export default function LabSidebar({
           <div className="nx-instructions-body" style={{ flex: 1, overflowY: 'auto', padding: '16px' }}>
             <div className="nx-timeline">
               {lab?.tasks?.map((task, index) => {
-                const isPassed = gradeReport?.passed;
+                const result = taskResults.get(String(task.id));
+                const isPassed = labPassed || Boolean(result?.passed);
+                const isFailed = !labPassed && Boolean(result?.graded) && !result?.passed;
                 const isCurrent = visibleAnswers[task.id] || (index === 0 && Object.keys(visibleAnswers).length === 0);
-                const statusClass = isPassed ? 'is-completed' : (isCurrent ? 'is-current' : 'is-pending');
+                const statusClass = isPassed ? 'is-completed' : isFailed ? 'is-failed' : (isCurrent ? 'is-current' : 'is-pending');
                 
                 return (
                   <div key={task.id} className={`nx-timeline-step ${statusClass}`} onClick={() => setVisibleAnswers({ [task.id]: true })} style={{ cursor: 'pointer' }}>
                     <div className="nx-timeline-node">
-                      {isPassed ? (
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
-                      ) : (
-                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><circle cx="12" cy="12" r="10"/></svg>
-                      )}
+                      {isPassed ? <CheckIcon /> : isFailed ? <CrossIcon /> : <CircleIcon />}
                     </div>
                     <div className="nx-timeline-content">
                       <div className="nx-timeline-title">{task.description}</div>
+                      <TaskGradeStatus result={result} labPassed={labPassed} />
                       {isCurrent && (
                         <div className="nx-timeline-desc" style={{ whiteSpace: 'pre-line', marginTop: '8px' }}>
                           {task.instructions}
                         </div>
                       )}
+                      {isCurrent && isFailed && <GradeFindings findings={result.findings} />}
                     </div>
                   </div>
                 );
@@ -142,7 +237,7 @@ export default function LabSidebar({
               <div className={`nx-timeline-step ${isGrading || gradeReport ? 'is-current' : 'is-pending'}`}>
                 <div className="nx-timeline-node">
                   {gradeReport && gradeReport.passed ? (
-                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>
+                    <CheckIcon />
                   ) : gradeReport && !gradeReport.passed ? (
                     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
                   ) : (
@@ -151,11 +246,13 @@ export default function LabSidebar({
                 </div>
                 <div className="nx-timeline-content">
                   <div className="nx-timeline-title">Verify Configuration</div>
-                  <div className="nx-timeline-desc">Click Grade to check your configuration against the solution.</div>
-                  {gradeReport && !gradeReport.passed && (
-                     <div style={{ marginTop: '12px', background: 'rgba(239, 68, 68, 0.1)', padding: '8px 12px', borderRadius: '6px', fontSize: '13px', color: '#ef4444', border: '1px solid rgba(239, 68, 68, 0.2)' }}>
-                       <strong>Config Mismatch: </strong> Your configuration does not match the solution. Please review your settings.
-                     </div>
+                  <div className="nx-timeline-desc">Click Grade to check your work. Each task then shows what is still missing.</div>
+                  {gradeReport && <GradeSummary report={gradeReport} />}
+                  {otherRequirements && (
+                    <>
+                      <div className="nx-task-status is-failed" style={{ marginTop: '10px' }}>{otherRequirements.description}</div>
+                      <GradeFindings findings={otherRequirements.findings} />
+                    </>
                   )}
                 </div>
               </div>

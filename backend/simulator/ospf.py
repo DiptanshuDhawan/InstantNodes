@@ -51,6 +51,28 @@ NETWORK_P2P = "point-to-point"
 NETWORK_LOOPBACK = "loopback"
 
 
+def normalise_network_statement(address: str, bits: str) -> Tuple[str, str]:
+    """``network <address> <bits> area N`` as IOS stores it.
+
+    IOS takes wildcard bits or a subnet mask: a contiguous mask with leading
+    one bits (``255.255.255.0``) becomes wildcard bits (``0.0.0.255``), and the
+    host bits of the address are cleared (``10.1.1.1 0.0.0.255`` is stored as
+    ``10.1.1.0 0.0.0.255``).  ``0.0.0.0 0.0.0.0`` is the match-all form and
+    becomes ``0.0.0.0 255.255.255.255``.  Raises ``ValueError`` for an invalid
+    dotted quad.
+    """
+    value = int(ipaddress.IPv4Address(address))
+    wildcard = int(ipaddress.IPv4Address(bits))
+    if value == 0 and wildcard == 0:
+        wildcard = 0xFFFFFFFF
+    elif wildcard & 0x80000000 and wildcard != 0xFFFFFFFF:
+        inverted = (~wildcard) & 0xFFFFFFFF
+        if inverted & (inverted + 1) == 0:  # leading ones, then zeros: a mask
+            wildcard = inverted
+    value &= (~wildcard) & 0xFFFFFFFF
+    return str(ipaddress.IPv4Address(value)), str(ipaddress.IPv4Address(wildcard))
+
+
 # ---------------------------------------------------------------------------
 # Result dataclasses
 # ---------------------------------------------------------------------------
@@ -842,6 +864,107 @@ class OspfEngine:
             if router_id:
                 return router_id
         return None
+
+    # ---- diagnostics (read-only, for grading feedback) -------------------
+    def _silent_neighbours(self, node_name: str, oi: OspfInterface) -> List[str]:
+        """Routers on ``oi``'s link with an up IPv4 interface not running OSPF."""
+        enabled = {item.key for item in self._all_ospf_interfaces()}
+        found: List[str] = []
+        for other_name, other in self.nodes.items():
+            if other_name == node_name or other.kind != "router":
+                continue
+            for interface in self._up_ip_interfaces(other_name):
+                if (other_name, interface.name) in enabled:
+                    continue
+                if self._segment(other_name, interface.name) == oi.segment:
+                    found.append(f"{other_name} {interface.name}")
+        return found
+
+    def diagnose(self, node_name: str) -> List[str]:
+        """Why ``node_name`` has no FULL adjacency, in plain language.
+
+        Mirrors the adjacency rules of :meth:`_groups` (same area, link,
+        subnet, hello/dead timers and network type; not passive) and changes
+        nothing.  Returns an empty list when no reason is found.
+        """
+        node = self.nodes.get(node_name)
+        if node is None or node.kind != "router":
+            return []
+        processes = [node.ospf_processes[pid] for pid in sorted(node.ospf_processes)]
+        if not processes:
+            return ["no OSPF process is configured"]
+        if all(process.shutdown for process in processes):
+            return ["the OSPF process is shut down"]
+        if self.router_id(node_name) is None:
+            return ["OSPF has no router ID because no interface with an IPv4 address is up"]
+        mine = [oi for oi in self._node_ospf_interfaces(node_name) if not oi.loopback]
+        if not mine:
+            return [
+                "no up interface is enabled for OSPF; check the network statements "
+                "and their wildcard masks"
+            ]
+        others = [
+            oi for oi in self._all_ospf_interfaces()
+            if oi.node != node_name and not oi.loopback
+        ]
+        problems: List[str] = []
+        for oi in mine:
+            if oi.passive:
+                problems.append(f"{oi.name} is a passive interface, so it sends no hellos")
+                continue
+            if oi.segment is None:
+                problems.append(f"{oi.name} has no working link")
+                continue
+            peers = [other for other in others if other.segment == oi.segment]
+            if not peers:
+                silent = self._silent_neighbours(node_name, oi)
+                if silent:
+                    problems.append(
+                        f"{', '.join(silent)} on the link of {oi.name} does not run OSPF"
+                    )
+                else:
+                    problems.append(f"no other OSPF router is on the link of {oi.name}")
+                continue
+            for peer in peers:
+                label = f"{peer.node} {peer.name}"
+                if peer.passive:
+                    problems.append(f"{label} is a passive interface")
+                if peer.area != oi.area:
+                    problems.append(
+                        f"area mismatch: {oi.name} is in area {oi.area}, "
+                        f"{label} is in area {peer.area}"
+                    )
+                if peer.network.with_prefixlen != oi.network.with_prefixlen:
+                    problems.append(
+                        f"subnet mismatch: {oi.name} is on {oi.network.with_prefixlen}, "
+                        f"{label} is on {peer.network.with_prefixlen}"
+                    )
+                if (peer.hello, peer.dead) != (oi.hello, oi.dead):
+                    problems.append(
+                        f"timer mismatch: {oi.name} uses hello {oi.hello}/dead {oi.dead}, "
+                        f"{label} uses hello {peer.hello}/dead {peer.dead}"
+                    )
+                if peer.network_type != oi.network_type:
+                    problems.append(
+                        f"network type mismatch: {oi.name} is {oi.network_type}, "
+                        f"{label} is {peer.network_type}"
+                    )
+                if peer.router_id == oi.router_id:
+                    problems.append(f"{label} uses the same router ID {oi.router_id}")
+                if (
+                    oi.network_type == NETWORK_BROADCAST
+                    and oi.priority == 0
+                    and peer.priority == 0
+                ):
+                    problems.append(
+                        f"{oi.name} and {label} both have OSPF priority 0, so no DR is "
+                        "elected and the neighbors stay in 2WAY"
+                    )
+        unique: List[str] = []
+        for problem in problems:
+            if problem not in unique:
+                unique.append(problem)
+        return unique
 
     # ---- legacy compatibility -------------------------------------------
     def ospf_neighbors(self, node_name: str) -> List[dict]:

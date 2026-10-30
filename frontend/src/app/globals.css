@@ -1103,6 +1103,91 @@ html, body {
 .nx-timeline-step.is-completed .nx-timeline-desc {
   opacity: 0.7;
 }
+.nx-timeline-step.is-failed .nx-timeline-node {
+  background: rgba(239, 68, 68, 0.12);
+  border-color: var(--red);
+  color: var(--red);
+}
+.nx-timeline-step.is-failed .nx-timeline-title {
+  color: var(--text-primary);
+}
+
+/* Grade feedback (per-task status and findings) */
+.nx-task-status {
+  font-size: 12px;
+  color: var(--text-muted);
+}
+.nx-task-status.is-passed { color: var(--green); }
+.nx-task-status.is-failed { color: #f87171; }
+.nx-findings {
+  list-style: none;
+  margin: 10px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+.nx-finding {
+  background: rgba(239, 68, 68, 0.06);
+  border: 1px solid rgba(239, 68, 68, 0.18);
+  border-radius: 8px;
+  padding: 8px 10px;
+  font-size: 12.5px;
+  line-height: 1.5;
+  color: var(--text-secondary);
+  cursor: auto;
+}
+.nx-finding-requires {
+  background: rgba(148, 163, 184, 0.08);
+  border-color: var(--border);
+}
+.nx-finding-node {
+  display: inline-block;
+  margin-right: 6px;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: rgba(255, 255, 255, 0.08);
+  color: var(--text-primary);
+  font-size: 11px;
+  font-weight: 600;
+}
+.nx-finding-title { color: var(--text-primary); font-weight: 600; }
+.nx-finding-label {
+  margin-top: 6px;
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+.nx-finding-code {
+  margin: 4px 0 0;
+  padding: 6px 8px;
+  background: var(--bg-terminal);
+  border-radius: 6px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 12px;
+  color: #e2e8f0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+.nx-finding-code.is-found { color: #fbbf24; }
+.nx-grade-summary {
+  margin-top: 12px;
+  padding: 8px 12px;
+  border-radius: 6px;
+  font-size: 13px;
+  line-height: 1.5;
+}
+.nx-grade-summary.is-failed {
+  background: rgba(239, 68, 68, 0.1);
+  border: 1px solid rgba(239, 68, 68, 0.2);
+  color: #fca5a5;
+}
+.nx-grade-summary.is-passed {
+  background: var(--green-bg);
+  border: 1px solid rgba(34, 197, 94, 0.3);
+  color: var(--green);
+}
 
 /* Hover Animations */
 .nx-timeline-step:hover .nx-timeline-node {

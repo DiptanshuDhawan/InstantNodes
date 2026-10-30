@@ -332,12 +332,11 @@ def _line_aux(ctx):
 )
 def _line_vty(ctx):
     first = ctx.args["first"]
-    if "last" in ctx.args:
-        name = f"vty {first} {ctx.args['last']}"
-    else:
-        name = f"vty {first}"
-    line = ctx.node.line(name)
-    ctx.push_mode(CONFIG_LINE, [line])
+    last = ctx.args.get("last", first)
+    # IOS applies the submode commands to every line of the range; the model
+    # keeps non-overlapping blocks (``line vty 0 15`` -> ``vty 0 4`` + ``vty 5 15``).
+    lines = ctx.node.vty_range(int(first), int(last))
+    ctx.push_mode(CONFIG_LINE, lines)
     return None
 
 

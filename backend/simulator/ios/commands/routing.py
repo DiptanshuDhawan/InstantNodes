@@ -30,6 +30,7 @@ import ipaddress
 from typing import List, Optional
 
 from ...models import StaticRoute, canonical_interface, natural_key
+from ...ospf import normalise_network_statement
 from ..parser import CONFIG, CONFIG_ROUTER, EXEC, command
 from ..protocol import Prompt, Sleep
 
@@ -218,7 +219,11 @@ def _ospf_network(ctx):
     process = _process(ctx)
     if process is None:
         return None
-    value = (ctx.args["net"], ctx.args["wild"], int(ctx.args["area"]))
+    # IOS stores the address with its host bits cleared and turns a subnet
+    # mask into wildcard bits (``network 10.1.1.1 255.255.255.0`` ->
+    # ``network 10.1.1.0 0.0.0.255``); ``no network`` matches the same way.
+    address, wildcard = normalise_network_statement(ctx.args["net"], ctx.args["wild"])
+    value = (address, wildcard, int(ctx.args["area"]))
     if ctx.negate:
         if value in process.networks:
             process.networks.remove(value)

@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import List
 
-from ...models import InterfaceState
+from ...models import InterfaceState, OSPFProcess
 from ..parser import (
     CONFIG_IF,
     CONFIG_IF_RANGE,
@@ -333,6 +333,8 @@ def _ip_ospf_area(ctx):
     for iface in _targets(ctx):
         iface.ospf_process = pid
         iface.ospf_area = area
+    # IOS starts the OSPF process (``router ospf <pid>``) when it does not run yet.
+    ctx.node.ospf_processes.setdefault(pid, OSPFProcess(pid))
     ctx.mark_dirty()
     return None
 

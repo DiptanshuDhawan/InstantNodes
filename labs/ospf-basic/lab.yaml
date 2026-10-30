@@ -77,6 +77,7 @@ lab:
     hint: Use `router ospf 1` and `network 192.168.1.0 0.0.0.255 area 0`.
   - id: 4
     description: Adjacency Verification
+    requires: [1, 2, 3]
     instructions: 'When OSPF synchronizes successfully, the neighbor state transitions
       to **FULL**. On this Ethernet link OSPF also elects a DR and BDR, so the state
       reads `FULL/DR` or `FULL/BDR`.
@@ -95,3 +96,9 @@ lab:
     - Ethernet0/0
     - R2
     - Ethernet0/1
+  checks:
+  - node: R1
+    task: 4
+    type: ping
+    target: 192.168.1.2
+    description: "R1 pings R2 (192.168.1.2) across the OSPF link"

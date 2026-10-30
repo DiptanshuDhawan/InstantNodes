@@ -1,6 +1,6 @@
 """API response models for the native NetSimX runtime."""
 
-from typing import List, Optional
+from typing import List, Optional, Union
 
 from pydantic import BaseModel, Field
 
@@ -37,6 +37,36 @@ class NodeGradeResult(BaseModel):
     error: str = ""
 
 
+class GradeFinding(BaseModel):
+    """One student-facing problem the grader found."""
+
+    node: str = ""
+    kind: str  # config | state | check | error | requires
+    title: str = ""
+    message: str
+    expected: List[str] = Field(default_factory=list)  # IOS lines that fix it
+    found: List[str] = Field(default_factory=list)  # related lines configured now
+
+
+class TaskGradeResult(BaseModel):
+    id: Optional[Union[int, str]] = None  # None for "Other requirements"
+    description: str
+    graded: bool
+    passed: bool
+    points: float
+    earned: float
+    requirements: int
+    satisfied: int
+    findings: List[GradeFinding] = Field(default_factory=list)
+
+
+class GradeSummary(BaseModel):
+    tasks_graded: int
+    tasks_passed: int
+    requirements: int
+    satisfied: int
+
+
 class GradeReport(BaseModel):
     lab_id: str
     lab_title: str
@@ -45,6 +75,8 @@ class GradeReport(BaseModel):
     percentage: float
     passed: bool
     node_results: List[NodeGradeResult]
+    tasks: List[TaskGradeResult] = Field(default_factory=list)
+    summary: Optional[GradeSummary] = None
 
 
 class SessionStartResponse(BaseModel):

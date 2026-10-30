@@ -69,7 +69,8 @@ lab:
       the IP address.
   - id: 3
     description: Configure DHCP on the Router
-    instructions: '1. Create two DHCP pools (e.g., `VLAN10` and `VLAN20`).
+    instructions: '1. Create two DHCP pools named `VLAN10` and `VLAN20` (the grader
+      checks these pool names).
 
       2. For VLAN 10, use `network 192.168.10.0 255.255.255.0` and `default-router
       192.168.10.1`.
@@ -112,28 +113,34 @@ lab:
     - Ethernet0/0
   checks:
   - node: PC1
+    task: 4
     type: dhcp
     network: 192.168.10.0/24
     gateway: 192.168.10.1
     description: "PC1 receives a VLAN10 address and gateway through DHCP"
   - node: PC2
+    task: 4
     type: dhcp
     network: 192.168.20.0/24
     gateway: 192.168.20.1
     description: "PC2 receives a VLAN20 address and gateway through DHCP"
   - node: PC1
+    task: 4
     type: ping
     target: 192.168.10.1
     description: "PC1 (VLAN10) pings R1 VLAN10 gateway - Subinterface reachable"
   - node: PC2
+    task: 4
     type: ping
     target: 192.168.20.1
     description: "PC2 (VLAN20) pings R1 VLAN20 gateway - Subinterface reachable"
   - node: PC1
+    task: 4
     type: ping_node
     target_node: PC2
     description: "PC1 reaches DHCP client PC2 across VLANs 10 and 20"
   - node: PC2
+    task: 4
     type: ping_node
     target_node: PC1
     description: "PC2 reaches DHCP client PC1 across VLANs 20 and 10"

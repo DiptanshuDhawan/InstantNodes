@@ -131,6 +131,23 @@ def interface_vlan(name: str) -> Optional[int]:
     return int(match.group(1)) if match else None
 
 
+def vty_span(line_name: str) -> Optional[Tuple[int, int]]:
+    """``(first, last)`` of a VTY line key (``"vty 0 4"``, ``"vty 5"``), else ``None``."""
+    parts = (line_name or "").split()
+    if not parts or parts[0] != "vty" or len(parts) not in (2, 3):
+        return None
+    if not all(part.isdigit() for part in parts[1:]):
+        return None
+    first = int(parts[1])
+    last = int(parts[2]) if len(parts) == 3 else first
+    return (min(first, last), max(first, last))
+
+
+def vty_name(first: int, last: int) -> str:
+    """The ``node.lines`` key of VTY lines ``first``..``last``."""
+    return f"vty {first}" if first == last else f"vty {first} {last}"
+
+
 @dataclass
 class InterfaceCounters:
     """Traffic counters shown by ``show interfaces`` (dynamic state)."""
@@ -645,6 +662,48 @@ class NodeState:
                 line.transport_input = set()
             self.lines[canonical] = line
         return line
+
+    def vty_range(self, first: int, last: int) -> List[LineConfig]:
+        """The VTY blocks that make up ``line vty <first> <last>``, in order.
+
+        IOS applies ``line vty`` commands to every line of the range, so a
+        range never overlaps another block: a block partly inside it is split
+        (the parts outside keep their settings), lines that do not exist yet
+        are created with the VTY defaults, and lines 5 and up stay apart from
+        the default 0-4 block (``line vty 0 15`` -> ``vty 0 4`` + ``vty 5 15``).
+        """
+        first, last = min(first, last), max(first, last)
+        inside: List[Tuple[int, LineConfig]] = []
+        covered: Set[int] = set()
+        for key in list(self.lines):
+            span = vty_span(key)
+            if span is None or span[1] < first or span[0] > last:
+                continue
+            low, high = span
+            config = self.lines.pop(key)
+            pieces: List[Tuple[int, int, LineConfig]] = []
+            if low < first:
+                pieces.append((low, first - 1, copy.deepcopy(config)))
+            core = (max(low, first), min(high, last), config)
+            pieces.append(core)
+            if high > last:
+                pieces.append((last + 1, high, copy.deepcopy(config)))
+            for start, end, piece in pieces:
+                piece.name = vty_name(start, end)
+                self.lines[piece.name] = piece
+            inside.append((core[0], config))
+            covered.update(range(core[0], core[1] + 1))
+        number = first
+        while number <= last:
+            if number in covered:
+                number += 1
+                continue
+            start = number
+            while number <= last and number not in covered and not (number == 5 and start < 5):
+                number += 1
+            inside.append((start, self.line(vty_name(start, number - 1))))
+        inside.sort(key=lambda item: item[0])
+        return [config for _start, config in inside]
 
     def ensure_default_lines(self) -> None:
         """Create the console, aux and VTY lines present on IOS devices."""

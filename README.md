@@ -129,6 +129,39 @@ labs/
 
 Behavioral checks currently support `ping` (an IPv4 target), `ping_node` (a named node's active address), `dhcp` (lease source/network/gateway), `ssh` (policy and exact credentials), and `telnet_refused` (reachable target with an explicit VTY refusal).
 
+### How grading works
+
+Grading reads one snapshot of the running lab and never changes the devices. A lab is reduced to requirements, each belonging to one node:
+
+- **Configuration.** Every line of `solution_<node>.cfg` must be in that device's running configuration; child lines keep their parent (`interface Ethernet0/0` → `ip address ...`). Credentials are verified against the stored hash, and an `enable password` or `username ... password` does not satisfy a required `secret`. VLANs hidden by VTP server mode, `no shutdown`, an `ntp server` line without `key` (any key is accepted), and `line vty` ranges split into several blocks are checked against device state.
+- **State implied by the solution.** Interfaces with an address or 802.1Q encapsulation must be up/up, `router ospf` needs a FULL neighbor, `ntp server` must be synchronized, `channel-group N mode active` members must be bundled, and SSH needs a domain name and 2048-bit RSA keys.
+- **Checks** from `lab.yaml`, as listed above.
+
+Tasks and score:
+
+- In a solution file, a `! task N` comment assigns the lines after it to task N, up to the next marker. Give every check a `task: N`. State requirements follow the solution line that implies them; when they also depend on another device (the other end of a cable, an OSPF neighbor, an NTP server), they move to the later task of the two.
+- A task passes when everything assigned to it passes. The score is the share of task `points` earned (default 1 per task), rounded down; it is 100% only when the whole lab passes. Tasks with nothing assigned are shown as not graded.
+- `requires: [ids]` on a task makes it count only after those tasks pass. Use it for verification tasks whose checks can already pass in the untouched lab.
+- Anything not assigned to a task is reported under "Other requirements".
+
+```text
+! task 3 - Configure IP Addresses
+interface Ethernet0/0
+ ip address 192.168.10.1 255.255.255.0
+ no shutdown
+```
+
+```yaml
+checks:
+  - node: PC1
+    task: 6
+    type: ping
+    target: 192.168.10.1
+    description: "PC1 pings R1"
+```
+
+`POST /api/grade/{session_id}` returns `passed`, `percentage`, `tasks` (per task: `passed`, `graded`, `points`, and `findings` with the node, a message, the expected lines and the related lines currently configured) and the per-node `node_results` with `missing_lines`.
+
 Start from one of the six existing labs, keep the directory name stable, and use only commands and modeled behaviors from the supported subset. Lab metadata is synchronized into SQLite when the backend starts; restart the backend after adding or renaming a lab.
 
 ## Persistence and migration

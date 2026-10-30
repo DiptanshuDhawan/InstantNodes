@@ -278,12 +278,12 @@ def _no_line_vty(ctx):
     """Delete added VTY lines (5 and up); the five default lines stay."""
     first = int(ctx.args["first"])
     last = int(ctx.args.get("last", first))
+    first, last = min(first, last), max(first, last)
     if first <= 4:
         return "% Not all lines may be deleted"
-    for name in [name for name in ctx.node.lines if name.startswith("vty")]:
-        numbers = [int(part) for part in name.split()[1:] if part.isdigit()]
-        if numbers and first <= numbers[0] and numbers[-1] <= last:
-            del ctx.node.lines[name]
+    # Split blocks at the range edges, then drop the lines inside the range.
+    for line in ctx.node.vty_range(first, last):
+        ctx.node.lines.pop(line.name, None)
     ctx.mark_dirty()
     return None
 

@@ -845,6 +845,11 @@ export function useLabSession(slug) {
           // Ignore unavailable storage.
         }
       } else {
+        // Open the first unfinished task so its findings are visible.
+        const firstFailed = (report.tasks || []).find(
+          task => task.graded && !task.passed && task.id !== null && task.id !== undefined
+        );
+        if (firstFailed) setVisibleAnswers({ [firstFailed.id]: true });
         setShowFailModal(true);
       }
     } catch (error) {

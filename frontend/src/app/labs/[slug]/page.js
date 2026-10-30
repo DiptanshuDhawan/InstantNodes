@@ -148,8 +148,12 @@ export default function LabEnvironment({ params }) {
             <div style={{ margin: '0 auto 16px auto', background: 'rgba(239, 68, 68, 0.1)', width: '64px', height: '64px', borderRadius: '50%', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#ef4444" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>
             </div>
-            <h3 style={{ margin: '0 0 8px 0', fontSize: '20px', color: '#fff' }}>Configuration Mismatch</h3>
-            <p style={{ margin: '0 0 24px 0', color: 'var(--text-muted)' }}>Some of your configurations do not match the expected solution. Check the tasks for details.</p>
+            <h3 style={{ margin: '0 0 8px 0', fontSize: '20px', color: '#fff' }}>Not complete yet</h3>
+            <p style={{ margin: '0 0 24px 0', color: 'var(--text-muted)' }}>
+              {sessionData.gradeReport?.summary
+                ? `Score ${sessionData.gradeReport.percentage}%: ${sessionData.gradeReport.summary.tasks_passed} of ${sessionData.gradeReport.summary.tasks_graded} graded tasks are complete. Tasks marked with a cross list what is missing.`
+                : 'Some of your configurations do not match the expected solution. Check the tasks for details.'}
+            </p>
             <button className="nx-btn nx-btn-blue" onClick={() => sessionData.setShowFailModal(false)} style={{ width: '100%', padding: '10px' }}>Review Errors</button>
           </div>
         </div>

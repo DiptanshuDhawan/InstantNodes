@@ -636,6 +636,67 @@ class ServicesEngine:
             )
         return _NtpSync(False, 16, "", None, reason="no valid server")
 
+    def ntp_diagnose(self, node: NodeRef, now: Optional[float] = None) -> List[str]:
+        """Why ``node`` is not NTP-synchronized, in plain language (read-only).
+
+        Walks the configured servers with the checks of :meth:`_ntp_resolve`
+        and reports the first one that fails for each server.
+        """
+        node = self._node(node)
+        now = self._resolve_now(now)
+        if node.ntp_master is not None:
+            return []
+        if not node.ntp_servers:
+            return ["no ntp server is configured"]
+        problems: List[str] = []
+        for address in sorted(node.ntp_servers, key=_ip_sort_key):
+            server_cfg = node.ntp_servers[address]
+            endpoint = self.callbacks.find_ip(address)
+            if endpoint is None:
+                problems.append(f"no device has the server address {address} on an up interface")
+                continue
+            if not self.callbacks.reachable(node.name, address):
+                problems.append(f"the server {address} is not reachable from {node.name}")
+                continue
+            upstream = self.nodes.get(endpoint[0])
+            if upstream is None:
+                continue
+            if node.ntp_authenticate:
+                key_id = server_cfg.key_id
+                if key_id is None:
+                    problems.append(
+                        f"NTP authentication is on (ntp authenticate), but the ntp server "
+                        f"{address} line has no key"
+                    )
+                    continue
+                if key_id not in node.ntp_trusted_keys:
+                    problems.append(f"key {key_id} is not trusted on {node.name} (ntp trusted-key {key_id})")
+                    continue
+                if key_id not in upstream.ntp_trusted_keys:
+                    problems.append(f"key {key_id} is not trusted on the server {upstream.name}")
+                    continue
+                if key_id not in node.ntp_keys:
+                    problems.append(f"authentication key {key_id} is not defined on {node.name}")
+                    continue
+                if key_id not in upstream.ntp_keys:
+                    problems.append(f"the server {upstream.name} has no authentication key {key_id}")
+                    continue
+                if node.ntp_keys.get(key_id) != upstream.ntp_keys.get(key_id):
+                    problems.append(
+                        f"the key {key_id} string on {node.name} differs from the one on "
+                        f"{upstream.name}"
+                    )
+                    continue
+            upstream_sync = self._ntp_resolve(upstream.name, now)
+            if not upstream_sync.synchronized:
+                problems.append(f"the server {upstream.name} ({address}) is not synchronized itself")
+                continue
+            if upstream_sync.stratum + 1 >= 16:
+                problems.append(
+                    f"the server {address} is at stratum {upstream_sync.stratum}, too high to sync from"
+                )
+        return problems
+
     def _ntp_reference_time(self, node: NodeState, now: float) -> Tuple[str, str]:
         utc = self.node_clock(node, now).utc
         unix = _to_epoch(utc)

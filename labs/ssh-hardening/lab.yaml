@@ -98,6 +98,7 @@ lab:
     hint: Under `line vty 0 4`, configure `transport input ssh` and `login local`.
   - id: 6
     description: Verification
+    requires: [3, 4, 5]
     instructions: 'Verify your configuration by SSHing into the router.
 
       1. Access the **PC1** terminal.
@@ -119,12 +120,24 @@ lab:
     - Ethernet0/2
   checks:
   - node: PC1
+    task: 6
+    type: ping
+    target: 192.168.10.1
+    description: "PC1 pings R1 (192.168.10.1)"
+  - node: PC1
+    task: 6
+    type: ping
+    target: 192.168.10.2
+    description: "PC1 pings SW1 (192.168.10.2)"
+  - node: PC1
+    task: 6
     type: ssh
     target: 192.168.10.1
     username: admin
     password: "Cisco123!"
     description: "PC1 authenticates to R1 over SSH with the configured local account"
   - node: PC1
+    task: 6
     type: telnet_refused
     target: 192.168.10.1
     description: "R1 refuses Telnet from PC1 because its VTY lines allow SSH only"

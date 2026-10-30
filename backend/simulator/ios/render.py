@@ -24,8 +24,9 @@ never imported here: rendering is a pure function of a single node's state.
 
 from __future__ import annotations
 
+import copy
 import ipaddress
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from ..models import (
     NodeState,
@@ -36,6 +37,8 @@ from ..models import (
     canonical_interface,
     interface_parent,
     natural_key,
+    vty_name,
+    vty_span,
 )
 
 __all__ = [
@@ -343,8 +346,8 @@ def _render_ios_running(node: NodeState, now: Optional[float] = None) -> str:
         builder.sep()
 
     # --- lines -------------------------------------------------------------
-    for name in _ordered_line_names(node):
-        builder.extend(_line_block(node, node.lines[name]))
+    for line in _rendered_lines(node):
+        builder.extend(_line_block(node, line))
         builder.sep()
 
     return builder.render()
@@ -725,6 +728,34 @@ def _ordered_line_names(node: NodeState) -> List[str]:
         return (kind, numbers)
 
     return sorted(node.lines, key=key)
+
+
+def _line_settings(line: LineConfig) -> dict:
+    return {key: value for key, value in vars(line).items() if key != "name"}
+
+
+def _rendered_lines(node: NodeState) -> List[LineConfig]:
+    """Lines in running-config order.  Adjacent VTY blocks with the same
+    settings print as one range, as IOS does (``line vty 0 1`` + ``2 4`` ->
+    ``line vty 0 4``), but never across the default 0-4 block and lines 5+."""
+    merged: List[Tuple[Optional[Tuple[int, int]], LineConfig]] = []
+    for name in _ordered_line_names(node):
+        line = node.lines[name]
+        span = vty_span(name)
+        if span is not None and merged and merged[-1][0] is not None:
+            low, high = merged[-1][0]
+            previous = merged[-1][1]
+            if (
+                span[0] == high + 1
+                and (high < 5) == (span[0] < 5)
+                and _line_settings(previous) == _line_settings(line)
+            ):
+                combined = copy.copy(previous)
+                combined.name = vty_name(low, span[1])
+                merged[-1] = ((low, span[1]), combined)
+                continue
+        merged.append((span, line))
+    return [line for _span, line in merged]
 
 
 def _line_block(node: NodeState, line: LineConfig) -> List[str]:

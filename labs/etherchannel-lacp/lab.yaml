@@ -77,6 +77,7 @@ lab:
 
     - id: 5
       description: Verify EtherChannel Connectivity
+      requires: [2, 3, 4]
       instructions: |
         The PCs already have IPs pre-configured at startup:
         - **PC1**: `10.10.10.1/24`
@@ -108,10 +109,12 @@ lab:
 
   checks:
     - node: PC1
+      task: 5
       type: ping
       target: 10.10.10.2
       description: "PC1 pings PC2 across EtherChannel trunk - Layer 2 connectivity"
     - node: PC2
+      task: 5
       type: ping
       target: 10.10.10.1
       description: "PC2 pings PC1 across EtherChannel trunk - Layer 2 connectivity"

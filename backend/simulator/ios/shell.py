@@ -137,17 +137,19 @@ def session_line(node, session):
     """The configured ``LineConfig`` a session runs under, or ``None``.
 
     A session on one VTY line (``line_name="vty 1"``) is governed by the
-    configured block covering it (``session.line_block``, e.g. ``"vty 0 4"``).
+    configured block covering that line; ``session.line_block`` (e.g.
+    ``"vty 0 4"``) is the fallback, since ``line vty`` can split blocks while
+    the session is open.
     """
     lines = getattr(node, "lines", None) or {}
-    for name in (getattr(session, "line_block", None), getattr(session, "line_name", None)):
-        if name and name in lines:
-            return lines[name]
     number = vty_number(getattr(session, "line_name", None))
     if number is not None:
         for name, first, last in vty_blocks(node):
             if first <= number <= last:
                 return lines[name]
+    for name in (getattr(session, "line_block", None), getattr(session, "line_name", None)):
+        if name and name in lines:
+            return lines[name]
     return None
 
 
