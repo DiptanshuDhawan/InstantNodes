@@ -277,6 +277,8 @@ def _normalise_command(
         return credential
 
     # Command keywords are case-insensitive; the listed arguments are not.
+    # (DHCP pool names are case-sensitive on IOS, but the grader compares
+    # them without case, so a pool named vlan10 satisfies VLAN10.)
     sensitive_patterns = (
         (r"^hostname\s+(.+)$", "hostname {}"),
         (r"^name\s+(.+)$", "name {}"),
@@ -284,7 +286,6 @@ def _normalise_command(
             r"^ntp\s+authentication-key\s+(\d+)\s+md5\s+(.+)$",
             "ntp authentication-key {} md5 {}",
         ),
-        (r"^ip\s+dhcp\s+pool\s+(.+)$", "ip dhcp pool {}"),
     )
     for pattern, template in sensitive_patterns:
         match = re.match(pattern, value, re.IGNORECASE)

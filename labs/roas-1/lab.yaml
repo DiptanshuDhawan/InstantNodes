@@ -70,7 +70,7 @@ lab:
   - id: 3
     description: Configure DHCP on the Router
     instructions: '1. Create two DHCP pools named `VLAN10` and `VLAN20` (the grader
-      checks these pool names).
+      checks the pool names, but not their letter case).
 
       2. For VLAN 10, use `network 192.168.10.0 255.255.255.0` and `default-router
       192.168.10.1`.
