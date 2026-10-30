@@ -22,12 +22,12 @@ export default function Roas2Topology({ activeNode }) {
           <text x="570" y="355" fill="#FFFFFF" fontSize="15" fontWeight="600" textAnchor="middle">VLAN 20</text>
 
           {/* Connection Lines */}
-          <line x1="500" y1="40" x2="480" y2="150" stroke="#000000" strokeWidth="2.5" />
-          <line x1="200" y1="150" x2="480" y2="150" stroke="#000000" strokeWidth="2.5" strokeDasharray="8 4" />
-          <line x1="200" y1="150" x2="110" y2="290" stroke="#000000" strokeWidth="2.5" />
-          <line x1="200" y1="150" x2="240" y2="290" stroke="#000000" strokeWidth="2.5" />
-          <line x1="480" y1="150" x2="440" y2="290" stroke="#000000" strokeWidth="2.5" />
-          <line x1="480" y1="150" x2="570" y2="290" stroke="#000000" strokeWidth="2.5" />
+          <line x1="500" y1="40" x2="480" y2="150" stroke="#2F80ED" strokeWidth="2.5" />
+          <line x1="200" y1="150" x2="480" y2="150" stroke="#2F80ED" strokeWidth="2.5" strokeDasharray="8 4" />
+          <line x1="200" y1="150" x2="110" y2="290" stroke="#2F80ED" strokeWidth="2.5" />
+          <line x1="200" y1="150" x2="240" y2="290" stroke="#2F80ED" strokeWidth="2.5" />
+          <line x1="480" y1="150" x2="440" y2="290" stroke="#2F80ED" strokeWidth="2.5" />
+          <line x1="480" y1="150" x2="570" y2="290" stroke="#2F80ED" strokeWidth="2.5" />
 
           {/* Interface Labels */}
           <text x="515" y="85" fill="#E2E8F0" fontSize="12" fontWeight="500">e0/0</text>

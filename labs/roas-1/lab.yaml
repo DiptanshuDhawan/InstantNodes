@@ -1,7 +1,7 @@
 lab:
   id: roas-1
   title: "Lab 04 — Router on a Stick I"
-  topic: Switching & Routing
+  topic: Routing & Switching
   difficulty: Intermediate
   estimated_time_minutes: 40
   objective: 'Configure Router-on-a-Stick to allow communication between multiple
