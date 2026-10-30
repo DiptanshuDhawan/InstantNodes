@@ -257,7 +257,7 @@ export default function Dashboard() {
             <div style={{ width: '20px', height: '20px', background: 'var(--text-muted)', borderRadius: '4px', display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '10px', color: 'var(--bg-base)', fontWeight: 700 }}>I</div>
             <span>InstantNodes v1.0.0</span>
           </div>
-          <div>Real Network Emulation Platform</div>
+          <div>Native Network Simulation Platform</div>
         </footer>
 
       </div>
