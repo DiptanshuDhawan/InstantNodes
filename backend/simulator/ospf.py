@@ -207,6 +207,26 @@ def _wildcard_matches(address_int: int, network_int: int, wildcard_int: int) -> 
     return (address_int & mask) == (network_int & mask)
 
 
+def interface_ospf_area(interface, process, process_id: int) -> Optional[int]:
+    """Area ``interface`` runs in for OSPF ``process_id``, from configuration.
+
+    ``ip ospf <pid> area <a>`` on the interface wins; otherwise the first
+    ``network`` statement of the process that matches the primary address.
+    ``None`` when the interface is not in that process.
+    """
+    if interface.ospf_process is not None:
+        if interface.ospf_process != process_id:
+            return None
+        return int(interface.ospf_area or 0)
+    address_int = _ip_int(interface.ip_address)
+    if address_int < 0:
+        return None
+    for network, wildcard, area in process.networks:
+        if _wildcard_matches(address_int, _ip_int(network), _ip_int(wildcard)):
+            return int(area)
+    return None
+
+
 class OspfEngine:
     """Computes OSPF adjacency, LSDB and routes from canonical node state."""
 
@@ -275,17 +295,7 @@ class OspfEngine:
 
     def _interface_area(self, interface, process, process_id: int) -> Optional[int]:
         """Return the area this interface runs in for *process*, or ``None``."""
-        if interface.ospf_process is not None:
-            if interface.ospf_process != process_id:
-                return None
-            return int(interface.ospf_area or 0)
-        address_int = _ip_int(interface.ip_address)
-        if address_int < 0:
-            return None
-        for network, wildcard, area in process.networks:
-            if _wildcard_matches(address_int, _ip_int(network), _ip_int(wildcard)):
-                return int(area)
-        return None
+        return interface_ospf_area(interface, process, process_id)
 
     def _node_ospf_interfaces(self, node_name: str) -> List[OspfInterface]:
         cached = self._node_ifaces.get(node_name)

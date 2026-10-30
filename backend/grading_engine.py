@@ -13,8 +13,10 @@ and, when the lab maps it, to one task:
   address ...``).  Lines that IOS does not show verbatim are checked against
   node state: credentials (type 5/7, and ``secret`` vs ``password``),
   ``no shutdown``, VLANs hidden by VTP server mode, ``ntp server`` (a line
-  without ``key`` accepts any key) and ``line vty`` ranges (however the range
-  is split into blocks).
+  without ``key`` accepts any key), ``line vty`` ranges (however the range
+  is split into blocks) and OSPF ``network`` lines (every interface the line
+  covers runs that process in that area, by any network statement or by
+  ``ip ospf <pid> area <a>``).
 * State implied by the solution.  Interfaces with an address or 802.1Q
   encapsulation are up/up, ``router ospf`` has a FULL neighbor, ``ntp server``
   is synchronized, ``channel-group N mode active`` members are bundled, and
@@ -57,7 +59,7 @@ from simulator.models import (
     interface_parent,
     natural_key,
 )
-from simulator.ospf import normalise_network_statement
+from simulator.ospf import interface_ospf_area, normalise_network_statement
 from simulator.runtime import SimulationSnapshot
 
 logger = logging.getLogger("netlabx.grading")
@@ -668,6 +670,51 @@ def _check_credential(node, parent: str, command: str) -> Optional[Tuple[bool, s
     return None
 
 
+def _ospf_network_satisfied(node, process_id: int, statement) -> Tuple[bool, str]:
+    """A required ``network A W area X`` under ``router ospf <pid>`` holds when
+    every interface whose primary address it covers runs process ``pid`` in
+    area X, however that was configured: this statement, another one (e.g.
+    ``network <ip> 0.0.0.0 area X``) or ``ip ospf <pid> area X`` on the
+    interface.  Returns ``(passed, message)`` like :func:`_evaluate_line`."""
+    address, bits, area = statement.groups()
+    try:
+        network = int(ipaddress.IPv4Address(address))
+        wildcard = int(ipaddress.IPv4Address(bits))
+        required_area = int(_normalise_area(area))
+    except (ipaddress.AddressValueError, ValueError):
+        return False, ""
+    process = node.ospf_processes.get(process_id)
+    if process is None:
+        return False, ""
+    keep = (~wildcard) & 0xFFFFFFFF
+    covered = []
+    for interface in sorted(node.interfaces.values(), key=lambda item: natural_key(item.name)):
+        try:
+            value = int(ipaddress.IPv4Address(interface.ip_address or ""))
+        except ipaddress.AddressValueError:
+            continue
+        if value & keep == network & keep:
+            covered.append(interface)
+    if not covered:
+        return False, ""
+    for interface in covered:
+        actual = interface_ospf_area(interface, process, process_id)
+        if actual == required_area:
+            continue
+        label = f"{interface.name} ({interface.ip_address})"
+        if actual is not None:
+            return False, (
+                f"{label} is in OSPF area {actual}, but the task asks for area {required_area}."
+            )
+        if interface.ospf_process is not None:
+            return False, (
+                f"{label} runs OSPF process {interface.ospf_process}, but the task asks "
+                f"for process {process_id} in area {required_area}."
+            )
+        return False, ""
+    return True, ""
+
+
 def _evaluate_line(node, line: ConfigLine, actual: RunningConfig) -> Tuple[bool, str]:
     """``(passed, message)`` for one solution line; ``message`` is set only when
     the failure has a more precise explanation than "missing"."""
@@ -699,6 +746,11 @@ def _evaluate_line(node, line: ConfigLine, actual: RunningConfig) -> Tuple[bool,
         name = re.match(r"^name\s+(\S+)$", command)
         if name and node.vlans.get(int(match.group(1))) == name.group(1):
             return True, ""
+
+    process = re.match(r"^router ospf (\d+)$", parent)
+    statement = _OSPF_NETWORK.match(command) if process else None
+    if statement:
+        return _ospf_network_satisfied(node, int(process.group(1)), statement)
 
     credential = _check_credential(node, line.parent_text or "", line.text)
     if credential is not None:
