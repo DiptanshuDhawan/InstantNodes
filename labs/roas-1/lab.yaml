@@ -1,5 +1,5 @@
 lab:
-  id: inter-vlan-routing
+  id: roas-1
   title: "Lab 04 — Router on a Stick I"
   topic: Switching & Routing
   difficulty: Intermediate
@@ -28,21 +28,17 @@ lab:
     description: Create a DHCP pool
   nodes:
   - name: R1
-    host: 100.120.167.31
-    console_port: 5000
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   - name: SW1
-    host: 100.120.167.31
-    console_port: 5001
-    device_type: cisco_iol_l2
+    kind: switch
+    cli_profile: ios
   - name: PC1
-    host: 100.120.167.31
-    console_port: 5002
-    device_type: vpcs
+    kind: host
+    cli_profile: vpcs
   - name: PC2
-    host: 100.120.167.31
-    console_port: 5003
-    device_type: vpcs
+    kind: host
+    cli_profile: vpcs
   tasks:
   - id: 1
     description: Configure the Switch (SW1)
@@ -90,10 +86,17 @@ lab:
     description: Test Connectivity
     instructions: '1. Console into PC1 and PC2 and request a DHCP address (`ip dhcp`).
 
-      2. Ping PC2 from PC1 to verify that Inter-VLAN routing is working!
+      2. Run `show ip` on both PCs. Confirm that PC1 received a `192.168.10.0/24`
+      address with gateway `192.168.10.1`, and PC2 received a `192.168.20.0/24`
+      address with gateway `192.168.20.1`.
+
+      3. Record the DHCP address shown by `show ip` on each PC. From PC1, ping PC2''s
+      address; then from PC2, ping PC1''s address to verify inter-VLAN routing in both
+      directions.
 
       '
-    hint: PC1 should get an IP in 192.168.10.x, and PC2 should get an IP in 192.168.20.x.
+    hint: Use `show ip` after `ip dhcp` to identify each PC's leased address and learned
+      gateway before running the cross-host pings.
   links:
   - - R1
     - Ethernet0/0
@@ -109,6 +112,16 @@ lab:
     - Ethernet0/0
   checks:
   - node: PC1
+    type: dhcp
+    network: 192.168.10.0/24
+    gateway: 192.168.10.1
+    description: "PC1 receives a VLAN10 address and gateway through DHCP"
+  - node: PC2
+    type: dhcp
+    network: 192.168.20.0/24
+    gateway: 192.168.20.1
+    description: "PC2 receives a VLAN20 address and gateway through DHCP"
+  - node: PC1
     type: ping
     target: 192.168.10.1
     description: "PC1 (VLAN10) pings R1 VLAN10 gateway - Subinterface reachable"
@@ -116,3 +129,11 @@ lab:
     type: ping
     target: 192.168.20.1
     description: "PC2 (VLAN20) pings R1 VLAN20 gateway - Subinterface reachable"
+  - node: PC1
+    type: ping_node
+    target_node: PC2
+    description: "PC1 reaches DHCP client PC2 across VLANs 10 and 20"
+  - node: PC2
+    type: ping_node
+    target_node: PC1
+    description: "PC2 reaches DHCP client PC1 across VLANs 20 and 10"

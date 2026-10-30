@@ -12,12 +12,32 @@ export default function LabEnvironment({ params }) {
   const { slug } = use(params);
   const sessionData = useLabSession(slug);
 
-  if (sessionData.loading || !sessionData.lab) {
-    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading Environment...</div>;
+  if (sessionData.loading) {
+    return <div style={{ height: '100vh', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>Loading Native Simulation...</div>;
+  }
+
+  if (!sessionData.lab) {
+    return (
+      <div role="alert" style={{ height: '100vh', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
+        <strong style={{ color: '#fff' }}>Native Simulation could not be loaded.</strong>
+        <span style={{ color: 'var(--text-muted)', maxWidth: 640 }}>{sessionData.errorMsg || 'The lab definition is unavailable.'}</span>
+      </div>
+    );
   }
 
   return (
     <>
+      {sessionData.errorMsg && (
+        <div
+          role="alert"
+          aria-live="assertive"
+          style={{ position: 'fixed', top: 72, left: '50%', transform: 'translateX(-50%)', zIndex: 2500, width: 'min(680px, calc(100vw - 32px))', display: 'flex', alignItems: 'flex-start', gap: 12, padding: '12px 14px', borderRadius: 8, border: '1px solid rgba(239, 68, 68, 0.45)', background: 'rgba(45, 18, 20, 0.97)', color: '#fecaca', boxShadow: '0 12px 32px rgba(0,0,0,0.35)', fontSize: 13, lineHeight: 1.45 }}
+        >
+          <div style={{ flex: 1 }}><strong style={{ color: '#fff' }}>Native Simulation: </strong>{sessionData.errorMsg}</div>
+          <button type="button" onClick={sessionData.clearError} aria-label="Dismiss error" style={{ border: 0, background: 'transparent', color: '#fecaca', cursor: 'pointer', fontSize: 18, lineHeight: 1 }}>×</button>
+        </div>
+      )}
+
       <div key={slug} className="nx-layout">
         <TopNav 
           session={sessionData.session}
@@ -46,7 +66,11 @@ export default function LabEnvironment({ params }) {
           session={sessionData.session}
           isBooting={sessionData.isBooting}
           bootProgress={sessionData.bootProgress}
+          bootOperation={sessionData.bootOperation}
+          isReady={sessionData.isReady}
           linkStatus={sessionData.linkStatus}
+          nodeStatuses={sessionData.nodeStatuses}
+          terminalStatuses={sessionData.terminalStatuses}
           activeTerminal={sessionData.activeTerminal}
           setActiveTerminal={sessionData.setActiveTerminal}
           termFontSize={sessionData.termFontSize}
@@ -59,6 +83,7 @@ export default function LabEnvironment({ params }) {
           lab={sessionData.lab}
           session={sessionData.session}
           isBooting={sessionData.isBooting}
+          nodeStatuses={sessionData.nodeStatuses}
           activeTerminal={sessionData.activeTerminal}
           setActiveTerminal={sessionData.setActiveTerminal}
         />

@@ -4,14 +4,13 @@ lab:
   topic: NTP
   difficulty: Intermediate
   estimated_time_minutes: 30
-  gns3_project_id: 6fb1419e-dd8e-4ec5-9847-d3a552194670
   objective: 'Configure a hierarchical Network Time Protocol (NTP) infrastructure using Stratum levels and Authentication. R0 will act as a Stratum 1 time server. R1 will sync directly from R0, becoming a Stratum 2 hub. R2 and R3 will act as Stratum 3 spokes, syncing directly from R1.'
   prerequisites:
   - Basic router navigation
   - IP addressing
   command_reference:
   - command: clock set <hh:mm:ss> <day> <month> <year>
-    description: Manually configure the volatile system clock
+    description: Manually configure the volatile system clock (privileged EXEC mode, not global config)
   - command: clock timezone <zone> <offset>
     description: Set the local timezone offset from UTC
   - command: ntp master <stratum>
@@ -26,45 +25,52 @@ lab:
     description: Specify a key as trusted for synchronization
   nodes:
   - name: R0
-    host: gns3-server
-    console_port: 5000
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   - name: R1
-    host: gns3-server
-    console_port: 5001
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   - name: R2
-    host: gns3-server
-    console_port: 5002
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   - name: R3
-    host: gns3-server
-    console_port: 5003
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   tasks:
   - id: 1
     description: Verify IP Configuration
     instructions: 'The routers have been pre-configured with hostnames and IP addresses. Your job is to verify everything is up before starting NTP configuration.
 
       Pre-configured addresses:
+
       - R0 Ethernet0/0 → 192.168.10.1/24 (link to R1)
+
       - R1 Ethernet0/2 → 192.168.10.2/24 (link to R0)
+
       - R1 Ethernet0/0 → 192.168.12.1/24 (link to R2)
+
       - R1 Ethernet0/1 → 192.168.13.1/24 (link to R3)
+
       - R2 Ethernet0/0 → 192.168.12.2/24 (link to R1)
+
       - R3 Ethernet0/0 → 192.168.13.2/24 (link to R1)
 
       1. On R1, verify all three interfaces are up: `show ip interface brief`
+
       2. Verify full connectivity by pinging from R1:
+
          - `ping 192.168.10.1` (R0)
+
          - `ping 192.168.12.2` (R2)
+
          - `ping 192.168.13.2` (R3)'
-    hint: All interfaces should show as "up/up". If any are down, press the Reset button and wait for the lab to fully boot.
+    hint: The three configured interfaces (Ethernet0/0, Ethernet0/1 and Ethernet0/2) should show `up` in both the Status and Protocol columns; the unused interfaces show `administratively down`. The simulator starts with these links up, so an interface that is down was shut down; re-enable it with `no shutdown` or press the Reset button to restore the pre-configured lab. The first ping to each address usually shows `.!!!!` (80 percent) because the first echo waits for ARP; a second ping shows `!!!!!`.
   - id: 2
     description: Baseline the System Clock
     instructions: 'Check and set the initial system clock manually.
 
-      1. On **R1**, run `show clock` to see the current time (likely defaulted to a past date).
+      1. On **R1**, run `show clock` to see the current time. It starts at the IOS default date, Mar 1 1993; the leading `*` means the time is not authoritative.
+
       2. In privileged EXEC mode, manually set the clock to today''s date and time using: `clock set hh:mm:ss day month year`
       
       *(Note: This is an ungraded foundational step, as `clock set` is not stored in the running-config).*'
@@ -74,7 +80,9 @@ lab:
     instructions: 'Configure the local timezone on all routers to Eastern Standard Time (EST, UTC-5).
 
       1. Enter global configuration mode on R0, R1, R2, and R3.
+
       2. Configure the timezone: `clock timezone EST -5`
+
       3. Enable Daylight Saving Time (DST): `clock summer-time EDT recurring`'
     hint: Use `clock timezone EST -5` and `clock summer-time EDT recurring` in global config.
   - id: 4
@@ -88,7 +96,9 @@ lab:
     instructions: 'Configure the NTP hierarchy so R1 syncs to R0, and R2/R3 sync to R1.
 
       1. On **R1**, point it to R0 as its NTP server: `ntp server 192.168.10.1`.
+
       2. On **R2**, point it to R1 as its NTP server: `ntp server 192.168.12.1`.
+
       3. On **R3**, point it to R1 as its NTP server: `ntp server 192.168.13.1`.'
     hint: Run `ntp server` on R1, R2, and R3 pointing to their respective uplinks.
   - id: 6
@@ -96,20 +106,27 @@ lab:
     instructions: 'Secure the NTP updates between all routers using MD5 authentication.
 
       1. On **all routers**, enable NTP authentication: `ntp authenticate`
+
       2. On **all routers**, define authentication key 1 with MD5 password `cisco`: `ntp authentication-key 1 md5 cisco`
+
       3. On **all routers**, trust key 1: `ntp trusted-key 1`
+
       4. On **R1**, update the server statement to use key 1: `ntp server 192.168.10.1 key 1`
+
       5. On **R2**, update the server statement to use key 1: `ntp server 192.168.12.1 key 1`
+
       6. On **R3**, update the server statement to use key 1: `ntp server 192.168.13.1 key 1`'
     hint: Remember to append `key 1` to the existing `ntp server` commands on R1, R2, and R3.
   - id: 7
     description: Verification
     instructions: 'Verify the complete NTP configuration.
 
-      1. Run `show ntp status` on R3. Ensure it shows clock is synchronized and its stratum level is 3.
-      2. Run `show ntp associations` on R2 and R3. Ensure the servers are listed and authenticated.
-      3. Run `show clock detail` on any router to ensure the time source says "NTP".'
-    hint: NTP can take a few minutes to fully synchronize. Be patient before running the verification commands!
+      1. Run `show ntp status` on R3. Ensure it shows `Clock is synchronized, stratum 3, reference is 192.168.13.1`.
+
+      2. Run `show ntp associations` on R2 and R3. Ensure each lists its server (192.168.12.1 on R2, 192.168.13.1 on R3) marked `*~` (sys.peer, configured). Then run `show ntp associations detail` and confirm the server line includes `authenticated`.
+
+      3. Run `show clock detail` on any router and ensure it shows `Time source is NTP`. R1, R2 and R3 now follow R0''s clock, which replaces the time you set on R1 in Task 2; R0 still counts from its 1993 default date unless you also run `clock set` on R0.'
+    hint: Synchronization is immediate in this simulator once connectivity, server addresses, and matching authentication key 1 are correct. If the server shows `+~` instead of `*~` and `show ntp status` says `Clock is unsynchronized`, check the key string, `ntp trusted-key 1` and the `key 1` on the `ntp server` line.
   links:
   - - R0
     - Ethernet0/0

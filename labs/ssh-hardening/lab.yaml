@@ -15,7 +15,7 @@ lab:
     description: Set the encrypted privileged exec password
   - command: service password-encryption
     description: Encrypt all plaintext passwords in the configuration
-  - command: banner motd # <message> #
+  - command: 'banner motd # <message> #'
     description: Set the message of the day banner
   - command: line console 0
     description: Enter console line configuration mode
@@ -31,38 +31,37 @@ lab:
     description: Restrict remote access to SSH only
   nodes:
   - name: R1
-    host: gns3-server
-    console_port: 5000
-    device_type: cisco_ios_telnet
-    console_password: ConsolePass1
-    enable_secret: Cisco123!
+    kind: router
+    cli_profile: ios
   - name: SW1
-    host: gns3-server
-    console_port: 5001
-    device_type: cisco_iol_l2
-    console_password: ConsolePass1
-    enable_secret: Cisco123!
+    kind: switch
+    cli_profile: ios
   - name: PC1
-    host: gns3-server
-    console_port: 5002
-    device_type: cisco_ios_telnet
+    kind: host
+    cli_profile: ios
   tasks:
   - id: 1
     description: Set Hostnames & MOTD Banner
     instructions: 'Configure the hostnames and set a Message of the Day (MOTD) banner on both the router and switch.
 
       1. On **R1**, enter global configuration mode and set the hostname to `R1`.
+
       2. Set the MOTD banner to exactly `Authorized Access Only` (surrounded by delimiter characters like `#`).
+
       3. Repeat these steps on **SW1**.'
-    hint: Use `hostname R1` and `banner motd # Authorized Access Only #`.
+    hint: 'Use `hostname R1` and `banner motd # Authorized Access Only #`.'
   - id: 2
     description: Secure Enable & Console Access
     instructions: 'Secure the privileged EXEC mode and console line on both R1 and SW1.
 
       1. On **R1**, set the enable secret password to `Cisco123!`.
+
       2. Secure the console line (`line console 0`) with the password `ConsolePass1` and require login.
+
       3. Set the console timeout to 5 minutes (`exec-timeout 5 0`).
+
       4. Enable the password encryption service (`service password-encryption`).
+
       5. Repeat these exact steps on **SW1**.'
     hint: Use `enable secret Cisco123!`, then `line console 0`, `password ConsolePass1`, `login`, and `exec-timeout 5 0`. Finally `service password-encryption` in global config.
   - id: 3
@@ -70,7 +69,9 @@ lab:
     instructions: 'Configure the IP addresses and default gateway so the devices can communicate.
 
       1. On **R1**, configure `Ethernet0/0` with IP address `192.168.10.1 255.255.255.0` and enable it.
+
       2. On **SW1**, configure interface `Vlan1` with IP address `192.168.10.2 255.255.255.0` and enable it.
+
       3. On **SW1**, set the default gateway to `192.168.10.1`.'
     hint: Use `interface e0/0`, `ip address <ip> <mask>`, and `no shutdown`. On the switch use `ip default-gateway <ip>` in global config.
   - id: 4
@@ -78,8 +79,11 @@ lab:
     instructions: 'SSH requires a domain name and RSA keys to function. Perform these steps on R1.
 
       1. On **R1**, set the domain name to `netlabx.local`.
+
       2. Generate RSA keys with a modulus of 2048 bits.
+
       3. Create a local user named `admin` with the secret password `Cisco123!`.
+
       4. Enforce SSH version 2 (`ip ssh version 2`).'
     hint: Use `ip domain-name netlabx.local`, `crypto key generate rsa` (then enter 2048 when prompted), `username admin secret Cisco123!`, and `ip ssh version 2`.
   - id: 5
@@ -87,7 +91,9 @@ lab:
     instructions: 'Now that SSH is prepared, restrict the VTY lines (0 through 4) on R1 to only allow SSH access, blocking Telnet.
 
       1. On **R1**, enter VTY line config (`line vty 0 4`).
+
       2. Restrict the input transport to SSH only (`transport input ssh`).
+
       3. Set it to use the local database for login authentication (`login local`).'
     hint: Under `line vty 0 4`, configure `transport input ssh` and `login local`.
   - id: 6
@@ -95,10 +101,13 @@ lab:
     instructions: 'Verify your configuration by SSHing into the router.
 
       1. Access the **PC1** terminal.
+
       2. Ping R1 (`ping 192.168.10.1`) and SW1 (`ping 192.168.10.2`) to verify connectivity.
-      3. SSH into R1: `ssh -l admin 192.168.10.1`
-      4. Attempt to Telnet to R1 (`telnet 192.168.10.1`). It should be refused.'
-    hint: The SSH command syntax on Cisco routers is `ssh -l <username> <ip>`.
+
+      3. SSH into R1 with `ssh -l admin 192.168.10.1` and enter the `admin` password `Cisco123!` at the `Password:` prompt. You should see `Password authentication accepted.`, the MOTD banner and the `R1>` prompt. Type `exit` to close the session and return to PC1.
+
+      4. Attempt to Telnet to R1 (`telnet 192.168.10.1`). It should be refused with `% Connection refused by remote host`.'
+    hint: The SSH command syntax on Cisco routers is `ssh -l <username> <ip>`. The first ping to each address usually shows `.!!!!` (80 percent) because the first echo waits for ARP.
   links:
   - - SW1
     - Ethernet0/1
@@ -108,3 +117,14 @@ lab:
     - Ethernet0/0
     - SW1
     - Ethernet0/2
+  checks:
+  - node: PC1
+    type: ssh
+    target: 192.168.10.1
+    username: admin
+    password: "Cisco123!"
+    description: "PC1 authenticates to R1 over SSH with the configured local account"
+  - node: PC1
+    type: telnet_refused
+    target: 192.168.10.1
+    description: "R1 refuses Telnet from PC1 because its VTY lines allow SSH only"

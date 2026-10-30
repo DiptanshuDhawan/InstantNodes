@@ -19,16 +19,15 @@ lab:
   - command: show ip ospf neighbor
     description: Verify OSPF adjacencies
   - command: show ip route ospf
-    description: Verify OSPF learned routes
+    description: Verify OSPF-learned routes (none in this lab, because 192.168.1.0/24
+      is directly connected on both routers)
   nodes:
   - name: R1
-    host: 100.120.167.31
-    console_port: 5000
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   - name: R2
-    host: 100.120.167.31
-    console_port: 5001
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   tasks:
   - id: 1
     description: R1 Interface Provisioning
@@ -79,16 +78,18 @@ lab:
   - id: 4
     description: Adjacency Verification
     instructions: 'When OSPF synchronizes successfully, the neighbor state transitions
-      to **FULL**.
+      to **FULL**. On this Ethernet link OSPF also elects a DR and BDR, so the state
+      reads `FULL/DR` or `FULL/BDR`.
 
 
       1. Verify adjacency: `show ip ospf neighbor`
 
-      2. Verify data plane connectivity: `ping 192.168.1.2`
+      2. Verify data plane connectivity from **R1**: `ping 192.168.1.2`
 
       '
     hint: If OSPF is configured correctly, `show ip ospf neighbor` should display
-      a neighbor with the state FULL.
+      the other router with the state `FULL/DR` or `FULL/BDR`. The first ping usually
+      shows `.!!!!` (80 percent) because the first echo waits for ARP.
   links:
   - - R1
     - Ethernet0/0

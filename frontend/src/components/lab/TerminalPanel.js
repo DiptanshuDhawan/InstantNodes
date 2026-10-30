@@ -1,5 +1,6 @@
 import React from 'react';
 import dynamic from 'next/dynamic';
+import { classifyNode } from '@/lib/nodeClassification';
 
 const Terminal = dynamic(() => import('@/components/Terminal'), { ssr: false });
 
@@ -35,13 +36,31 @@ const SidebarPCIcon = () => (
   </svg>
 );
 
+function NodeIcon({ node }) {
+  const kind = classifyNode(node);
+  if (kind === 'switch') return <SidebarSwitchIcon />;
+  if (kind === 'host') return <SidebarPCIcon />;
+  return <SidebarRouterIcon />;
+}
+
+function bootLabel(operation) {
+  if (operation === 'resetting') return 'RESETTING NATIVE SIMULATION';
+  if (operation === 'restoring') return 'RESTORING NATIVE SIMULATION';
+  if (operation === 'reconnecting') return 'RECONNECTING NATIVE SIMULATION';
+  return 'STARTING NATIVE SIMULATION';
+}
+
 export default function TerminalPanel({
-  lab, session, isBooting, bootProgress,
+  lab, session, isBooting, bootProgress, bootOperation, isReady,
+  terminalStatuses,
   activeTerminal, setActiveTerminal,
   termFontSize, setTermFontSize,
-  wsRefs, bufRefs
+  wsRefs, bufRefs,
 }) {
-  const nodes = lab?.nodes?.map(n => n.name) || [];
+  const nodes = lab?.nodes?.map(node => node.name) || [];
+  const runtimeIsReady = isReady ?? Boolean(session && !isBooting);
+  const activeTerminalStatus = terminalStatuses?.[activeTerminal];
+  const terminalIsConnecting = session && runtimeIsReady && activeTerminal && activeTerminalStatus !== 'connected';
 
   return (
     <div className="nx-term-panel nx-card" style={{ padding: 0 }}>
@@ -52,31 +71,27 @@ export default function TerminalPanel({
               key={node.name}
               className={`nx-term-tab ${activeTerminal === node.name ? 'active' : ''}`}
               onClick={() => setActiveTerminal(node.name)}
-              disabled={!session || isBooting}
+              disabled={!session || isBooting || !runtimeIsReady}
             >
-              <span className="tab-icon">
-                {node.device_type === 'cisco_iol_l2' ? <SidebarSwitchIcon /> : 
-                 (node.device_type === 'linux' || node.device_type === 'vpcs') ? <SidebarPCIcon /> : 
-                 <SidebarRouterIcon />}
-              </span>
+              <span className="tab-icon"><NodeIcon node={node} /></span>
               {node.name}
             </button>
           ))}
         </div>
-        
+
         <div style={{ display: 'flex', gap: '8px', alignItems: 'center' }}>
-          <button 
-            className="nx-btn" 
+          <button
+            className="nx-btn"
             style={{ padding: '4px 8px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-            onClick={() => setTermFontSize(f => Math.max(12, f - 2))}
+            onClick={() => setTermFontSize(fontSize => Math.max(12, fontSize - 2))}
             title="Decrease Font Size"
           >
             A-
           </button>
-          <button 
-            className="nx-btn" 
+          <button
+            className="nx-btn"
             style={{ padding: '4px 8px', background: 'transparent', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
-            onClick={() => setTermFontSize(f => Math.min(24, f + 2))}
+            onClick={() => setTermFontSize(fontSize => Math.min(24, fontSize + 2))}
             title="Increase Font Size"
           >
             A+
@@ -84,14 +99,14 @@ export default function TerminalPanel({
         </div>
       </div>
       <div className="nx-term-body">
-        {!session || isBooting ? (
+        {!session || isBooting || !runtimeIsReady ? (
           <div style={{ position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', backgroundColor: 'var(--bg-base)' }}>
             {isBooting ? (
               <div style={{ display: 'flex', alignItems: 'center', gap: 12, color: 'var(--text-muted)' }}>
                 <svg className="nx-spin" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round">
                   <path d="M21 12a9 9 0 1 1-6.219-8.56" />
                 </svg>
-                <span style={{ fontSize: 13, letterSpacing: '0.5px' }}>BOOTING ENVIRONMENT... {bootProgress}%</span>
+                <span style={{ fontSize: 13, letterSpacing: '0.5px' }}>{bootLabel(bootOperation)}... {bootProgress}%</span>
               </div>
             ) : (
               <>
@@ -102,17 +117,35 @@ export default function TerminalPanel({
                     <line x1="12" y1="16" x2="16" y2="16"/>
                   </svg>
                 </div>
-                <div style={{ color: 'var(--text-secondary)', fontSize: 14, letterSpacing: '0.5px', marginBottom: 6 }}>ENVIRONMENT OFFLINE</div>
-                <div style={{ color: 'var(--text-muted)', fontSize: 13, letterSpacing: '0.5px' }}>PRESS THE PLAY BUTTON TO START THE LAB SESSION</div>
+                <div style={{ color: 'var(--text-secondary)', fontSize: 14, letterSpacing: '0.5px', marginBottom: 6 }}>
+                  {session ? 'NATIVE SIMULATION UNAVAILABLE' : 'ENVIRONMENT OFFLINE'}
+                </div>
+                <div style={{ color: 'var(--text-muted)', fontSize: 13, letterSpacing: '0.5px' }}>
+                  {session ? 'RESET OR STOP THE SESSION TO RECOVER' : 'SELECT START LAB TO LAUNCH THE NATIVE SIMULATION'}
+                </div>
               </>
             )}
           </div>
         ) : (
-          nodes.map(node => (
-            <div key={node} style={{ display: activeTerminal === node ? 'block' : 'none', height: '100%' }}>
-              <Terminal ws={wsRefs.current[node]} buffer={bufRefs.current[node]} nodeName={node} fontSize={termFontSize} />
-            </div>
-          ))
+          <>
+            {nodes.map(node => (
+              <div key={node} style={{ display: activeTerminal === node ? 'block' : 'none', height: '100%' }}>
+                <Terminal ws={wsRefs.current[node]} buffer={bufRefs.current[node]} nodeName={node} fontSize={termFontSize} />
+              </div>
+            ))}
+            {terminalIsConnecting && (
+              <div
+                role="status"
+                style={{ position: 'absolute', top: 12, right: 16, zIndex: 5, padding: '6px 10px', borderRadius: 6, border: '1px solid rgba(245, 158, 11, 0.35)', background: 'rgba(20, 21, 23, 0.9)', color: 'var(--warning, #f59e0b)', fontSize: 11, letterSpacing: '0.5px' }}
+              >
+                {activeTerminalStatus === 'failed'
+                  ? 'TERMINAL CONNECTION REJECTED'
+                  : activeTerminalStatus === 'disconnected'
+                    ? 'TERMINAL DISCONNECTED — RETRYING...'
+                    : 'RECONNECTING TERMINAL...'}
+              </div>
+            )}
+          </>
         )}
       </div>
     </div>

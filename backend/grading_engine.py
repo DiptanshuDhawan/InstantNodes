@@ -1,392 +1,749 @@
+"""Native NetSimX grading engine.
+
+The grader consumes an immutable simulator snapshot.  It never opens a console,
+changes CLI modes, or mutates a running lab.
 """
-NetLabX Core Grading Engine
-Connects to routers, issues 'show run', and compares with solution config.
-"""
+
+from __future__ import annotations
+
+import ipaddress
+import logging
+import os
+import re
+from typing import Dict, List, Optional, Set
 
 import yaml
-import sys
-import os
-import time
-import logging
 
-sys.stdout.reconfigure(encoding='utf-8')
-
-from netmiko import ConnectHandler
-from netmiko.exceptions import NetMikoTimeoutException, AuthenticationException
+from simulator.crypto import verify_credential
+from simulator.models import (
+    canonical_interface,
+    credential_digest,
+    interface_parent,
+    natural_key,
+)
+from simulator.runtime import SimulationSnapshot
 
 logger = logging.getLogger("netlabx.grading")
 
+
 def load_lab_definition(yaml_path: str) -> dict:
-    with open(yaml_path, "r") as f:
-        return yaml.safe_load(f)
+    with open(yaml_path, "r", encoding="utf-8") as handle:
+        return yaml.safe_load(handle)
+
+
+def _normalise_banner(value: str) -> str:
+    value = value.strip()
+    delimiter = "^C" if value.startswith("^C") else value[:1]
+    message = value[len(delimiter) :].strip()
+    if delimiter and message.endswith(delimiter):
+        message = message[: -len(delimiter)].strip()
+    return f"banner motd {message}"
+
+
+def _credential_fingerprint(value: str) -> str:
+    rendered = re.match(r"^[78]\s+([0-9a-fA-F]{64})$", value)
+    if rendered:
+        return rendered.group(1).lower()
+    return credential_digest(value)
+
+
+def _normalise_credential_command(
+    value: str, canonicalize: bool = True
+) -> Optional[str]:
+    match = re.match(r"^enable\s+secret\s+(.+)$", value, re.IGNORECASE)
+    if match:
+        secret = match.group(1)
+        rendered = _credential_fingerprint(secret) if canonicalize else secret
+        marker = "sha256 " if canonicalize else ""
+        return f"enable secret {marker}{rendered}"
+    match = re.match(
+        r"^username\s+(\S+)\s+secret\s+(.+)$", value, re.IGNORECASE
+    )
+    if match:
+        username, secret = match.groups()
+        rendered = _credential_fingerprint(secret) if canonicalize else secret
+        marker = "sha256 " if canonicalize else ""
+        return f"username {username} secret {marker}{rendered}"
+    match = re.match(r"^password\s+(.+)$", value, re.IGNORECASE)
+    if match:
+        secret = match.group(1)
+        rendered = _credential_fingerprint(secret) if canonicalize else secret
+        marker = "sha256 " if canonicalize else ""
+        return f"password {marker}{rendered}"
+    return None
+
+
+def _normalise_command(
+    value: str, canonicalize_credentials: bool = True
+) -> str:
+    value = re.sub(r"\s+", " ", value.strip())
+    match = re.match(r"^interface\s+(.+)$", value, re.IGNORECASE)
+    if match:
+        return "interface " + canonical_interface(match.group(1))
+    match = re.match(r"^line\s+console\s+0$", value, re.IGNORECASE)
+    if match:
+        return "line con 0"
+    match = re.match(r"^line\s+con\s+0$", value, re.IGNORECASE)
+    if match:
+        return "line con 0"
+    match = re.match(r"^banner\s+motd\s+(.+)$", value, re.IGNORECASE)
+    if match:
+        return _normalise_banner(match.group(1))
+    match = re.match(r"^ip\s+domain[\s-]name\s+(\S+)$", value, re.IGNORECASE)
+    if match:
+        # ``ip domain name`` (IOS 15 render) == ``ip domain-name`` (classic).
+        return f"ip domain-name {match.group(1).lower()}"
+    match = re.match(
+        r"^clock\s+timezone\s+(\S+)\s+(-?\d+)(?:\s+(-?\d+))?$", value, re.IGNORECASE
+    )
+    if match:
+        # IOS 15 always prints the minutes field; a trailing " 0" is equivalent
+        # to omitting it in an authored solution.
+        name, hours, minutes = match.group(1), match.group(2), match.group(3)
+        if minutes is None or int(minutes) == 0:
+            return f"clock timezone {name.lower()} {hours}"
+        return f"clock timezone {name.lower()} {hours} {minutes}"
+
+    credential = _normalise_credential_command(value, canonicalize_credentials)
+    if credential is not None:
+        return credential
+
+    # Command keywords are case-insensitive; the listed arguments are not.
+    sensitive_patterns = (
+        (r"^hostname\s+(.+)$", "hostname {}"),
+        (r"^name\s+(.+)$", "name {}"),
+        (
+            r"^ntp\s+authentication-key\s+(\d+)\s+md5\s+(.+)$",
+            "ntp authentication-key {} md5 {}",
+        ),
+        (r"^ip\s+dhcp\s+pool\s+(.+)$", "ip dhcp pool {}"),
+    )
+    for pattern, template in sensitive_patterns:
+        match = re.match(pattern, value, re.IGNORECASE)
+        if match:
+            return template.format(*match.groups())
+    return value.lower()
+
+
+def _is_parent(command: str) -> bool:
+    return bool(
+        re.match(
+            r"^(?:interface\s+|vlan\s+\d+$|router\s+ospf\s+\d+$|"
+            r"ip\s+dhcp\s+pool\s+|line\s+)",
+            command,
+            re.IGNORECASE,
+        )
+    )
+
+
+def _is_child(parent: str, command: str) -> bool:
+    lower = command.lower()
+    if parent.startswith("interface "):
+        return lower.startswith(
+            (
+                "ip address ",
+                "no ip address",
+                "shutdown",
+                "no shutdown",
+                "encapsulation ",
+                "no encapsulation",
+                "switchport ",
+                "no switchport ",
+                "channel-group ",
+                "no channel-group",
+            )
+        )
+    if parent.startswith("vlan "):
+        return lower.startswith(("name ", "no name"))
+    if parent.startswith("router ospf "):
+        return lower.startswith(("network ", "no network "))
+    if parent.startswith("ip dhcp pool "):
+        return lower.startswith(("network ", "default-router ", "dns-server "))
+    if parent.startswith("line "):
+        return lower.startswith(
+            ("password ", "login", "no login", "exec-timeout ", "transport input ")
+        )
+    return False
+
+
+def normalise_config(
+    config_text: str, canonicalize_credentials: bool = True
+) -> Set[str]:
+    """Convert config text into context-aware required command strings."""
+    result: Set[str] = set()
+    current_parent: Optional[str] = None
+    skip_prefixes = (
+        "building configuration",
+        "current configuration",
+        "last configuration change",
+        "version ",
+        "boot-start-marker",
+        "boot-end-marker",
+        "ntp clock-period",
+    )
+    for raw_line in config_text.splitlines():
+        stripped = raw_line.strip()
+        if not stripped or stripped.startswith("!") or stripped.lower() == "end":
+            continue
+        if any(stripped.lower().startswith(prefix) for prefix in skip_prefixes):
+            continue
+        command = _normalise_command(
+            stripped, canonicalize_credentials=canonicalize_credentials
+        )
+        if _is_parent(command):
+            current_parent = command
+            result.add(command)
+            continue
+        if (raw_line[:1].isspace() or (current_parent and _is_child(current_parent, command))) and current_parent:
+            result.add(f"{current_parent} -> {command}")
+            continue
+        current_parent = None
+        result.add(command)
+    return result
+
+
+def _canonicalize_display_entry(entry: str) -> str:
+    """Convert a display-safe expected entry to its comparison representation."""
+    parent, separator, command = entry.rpartition(" -> ")
+    credential = _normalise_credential_command(command, canonicalize=True)
+    if credential is None:
+        return entry
+    return f"{parent}{separator}{credential}" if separator else credential
+
+
+def _canonical_line_name(name: str) -> str:
+    """Normalise a line identifier the way :meth:`NodeState.line` stores it."""
+    canonical = re.sub(r"\s+", " ", name.strip().lower())
+    return canonical.replace("console", "con")
+
+
+def _expected_plaintext(value: str) -> str:
+    """Return the plaintext a solution expects, tolerating an explicit ``0 ``."""
+    value = value.strip()
+    match = re.match(r"^0\s+(.+)$", value)
+    return match.group(1) if match else value
+
+
+def _secret_matches(stored: Optional[str], expected: str) -> bool:
+    """True when a stored credential equals, or verifies, the expected plaintext."""
+    if stored is None:
+        return False
+    if stored == expected:
+        return True
+    return verify_credential(expected, encoded=stored)
+
+
+def _credential_satisfied(node, parent: str, command: str) -> bool:
+    """Verify a required credential line against the snapshot node directly.
+
+    IOS renders ``enable secret``/``username ... secret`` as type 5 and line
+    passwords / NTP keys as type 7, so a verbatim text match against the
+    rendered config is impossible.  The authored solution carries the plaintext,
+    which we verify against the stored (possibly hashed) value instead.
+    """
+    match = re.match(r"^enable\s+(?:secret|password)\s+(.+)$", command, re.IGNORECASE)
+    if match:
+        return node.verify_enable(_expected_plaintext(match.group(1)))
+    match = re.match(
+        r"^username\s+(\S+)\s+(?:secret|password)\s+(.+)$", command, re.IGNORECASE
+    )
+    if match:
+        return node.verify_user(match.group(1), _expected_plaintext(match.group(2)))
+    match = re.match(
+        r"^ntp\s+authentication-key\s+(\d+)\s+md5\s+(.+)$", command, re.IGNORECASE
+    )
+    if match:
+        key_id = int(match.group(1))
+        expected = _expected_plaintext(re.sub(r"\s+7$", "", match.group(2)))
+        return _secret_matches(node.ntp_keys.get(key_id), expected)
+    if parent.lower().startswith("line "):
+        match = re.match(r"^password\s+(.+)$", command, re.IGNORECASE)
+        if match:
+            line = node.lines.get(_canonical_line_name(parent.split(" ", 1)[1]))
+            return line is not None and _secret_matches(
+                line.password, _expected_plaintext(match.group(1))
+            )
+    return False
+
+
+def _requirement_satisfied(node, token: str, display: str) -> bool:
+    """True when the snapshot node satisfies a required line that the IOS
+    renderer legitimately does not reproduce verbatim: credentials (type 5/7),
+    ``no shutdown`` on an interface that is not administratively down, and VLANs
+    that VTP server/client mode hides from the running-config."""
+    head, separator, leaf = display.rpartition(" -> ")
+    parent = head if separator else ""
+    command = leaf.strip()
+
+    if parent.lower().startswith("interface ") and command.lower() in (
+        "no shutdown",
+        "no shut",
+    ):
+        name = canonical_interface(parent.split(" ", 1)[1])
+        interface = node.interfaces.get(name)
+        return interface is not None and not interface.shutdown
+
+    if not separator:
+        match = re.match(r"^vlan\s+(\d+)$", command, re.IGNORECASE)
+        if match:
+            return int(match.group(1)) in node.vlans
+
+    return _credential_satisfied(node, parent, command)
 
 
 class BaseGrader:
-    def __init__(self, node_name: str, node_config: dict, solution_path: str):
+    def __init__(
+        self,
+        node_name: str,
+        node_config: dict,
+        solution_path: str,
+        snapshot: Optional[SimulationSnapshot] = None,
+    ) -> None:
         self.node_name = node_name
         self.node_config = node_config
         self.solution_path = solution_path
+        self.snapshot = snapshot
 
     def sanitize_config(self, config_text: str) -> set:
-        lines = []
-        current_context = ""
-        import re
+        """Compatibility name retained for callers of the previous grader."""
+        return normalise_config(config_text)
 
-        # IOS boilerplate lines that vary by image/version — never grade these
-        SKIP_PREFIXES = (
-            "Building configuration", "Current configuration",
-            "ntp clock-period", "Last configuration change",
-            "version ", "boot-start-marker", "boot-end-marker",
-            # AAA/model lines differ between IOS versions
-            "no aaa new-model", "aaa new-model",
-            # HTTP server lines differ
-            "no ip http", "ip http",
-            # IPv6 defaults differ
-            "no ipv6 cef", "ip cef", "ipv6 multicast", "ipv6 unicast",
-            # STP config varies by image
-            "spanning-tree",
-            # VLAN database lines (L2 switch boilerplate)
-            "vlan internal",
-            # Control plane lines
-            "control-plane",
-            # Interface defaults — duplex/speed auto are defaults, not graded
-            "duplex auto", "duplex full", "duplex half",
-            "speed auto",
-            # Timestamp/logging defaults differ
-            "service timestamps", "service compress-config",
-            "logging synchronous",
-            # Memory/hardware lines
-            "no ip domain lookup",
-            # Interface state — "no shutdown" never appears in show run when up
-            "no shutdown",
-        )
-
-        for line in config_text.splitlines():
-            stripped = line.strip()
-
-            # Skip blank lines and comments
-            if not stripped or stripped.startswith("!"):
-                continue
-            if any(stripped.startswith(p) for p in SKIP_PREFIXES):
-                continue
-            if stripped == "end":
-                continue
-            if "NVRAM" in stripped or "bytes" in stripped:
-                continue
-
-            # ── Normalizations ──────────────────────────────────────────────
-
-            # 1. Secrets / passwords — strip type digit AND value entirely.
-            #    Handles: plaintext (solution files), type-5 MD5, type-4 SHA256,
-            #    type-7 Vigenere, type-8/9 PBKDF2 — all collapse to the same key.
-            stripped = re.sub(r'\benable secret\b.*', 'enable secret', stripped)
-            stripped = re.sub(r'\busername (\S+) privilege \d+', r'username \1', stripped)
-            stripped = re.sub(r'\busername (\S+) secret\b.*', r'username \1 secret', stripped)
-            stripped = re.sub(r'\busername (\S+) password\b.*', r'username \1 password', stripped)
-            stripped = re.sub(r'\bpassword \d+ \S+', 'password', stripped)
-            stripped = re.sub(r'\bsecret \d+ \S+', 'secret', stripped)
-            stripped = re.sub(r'\bpassword \S+', 'password', stripped)
-
-            # 1b. NTP authentication key — IOS encrypts MD5 key in show run.
-            #     "ntp authentication-key 1 md5 cisco" and
-            #     "ntp authentication-key 1 md5 7 <hash>" both normalize to
-            #     "ntp authentication-key 1 md5"
-            stripped = re.sub(r'^(ntp authentication-key \d+ md5).*', r'\1', stripped)
-
-            # 2. Banner — ignore delimiter character and message text entirely
-            stripped = re.sub(r'^banner motd .*', 'banner motd', stripped)
-
-            # 3. Line name abbreviations — IOS uses "line con 0" in show run
-            #    but humans write "line console 0". Normalise both to "line con 0".
-            stripped = re.sub(r'^line console 0$', 'line con 0', stripped)
-
-            # 4. Interface name normalization — IOS expands abbreviations in show run.
-            #    e.g. "int e0/0" -> "interface Ethernet0/0" -> normalise to lowercase short form.
-            def normalise_iface(m):
-                name = m.group(1).lower()
-                # Expand common abbreviations to full name
-                replacements = [
-                    (r'^et?h?e?r?n?e?t?(\d)', r'ethernet\1'),
-                    (r'^fa?s?t?e?t?h?e?r?n?e?t?(\d)', r'fastethernet\1'),
-                    (r'^gi?g?a?b?i?t?e?t?h?e?r?n?e?t?(\d)', r'gigabitethernet\1'),
-                    (r'^se?r?i?a?l?(\d)', r'serial\1'),
-                    (r'^lo?o?p?b?a?c?k?(\d)', r'loopback\1'),
-                    (r'^vl?a?n?(\d)', r'vlan\1'),
-                    (r'^tu?n?n?e?l?(\d)', r'tunnel\1'),
-                ]
-                for pattern, repl in replacements:
-                    name = re.sub(pattern, repl, name)
-                return 'interface ' + name
-            stripped = re.sub(r'^interface (\S+)$', normalise_iface, stripped, flags=re.IGNORECASE)
-
-            # ── Context tracking (indented subcommands) ──────────────────────
-            if line.startswith(" ") or line.startswith("\t"):
-                if current_context:
-                    lines.append(f"{current_context} -> {stripped}")
+    def _operational_requirements(self, expected: Set[str]) -> List[str]:
+        if self.snapshot is None or self.node_name not in self.snapshot.nodes:
+            return []
+        missing: List[str] = []
+        network = self.snapshot.network()
+        interfaces = set()
+        for line in expected:
+            match = re.match(
+                r"^(interface\s+\S+) -> (?:ip address|encapsulation dot1q)", line
+            )
+            if match:
+                interfaces.add(match.group(1).split(" ", 1)[1])
+        for interface in sorted(interfaces, key=natural_key):
+            if not network.interface_oper_up(self.node_name, interface):
+                status, protocol = network.line_state(self.node_name, interface)
+                if status == "administratively down":
+                    missing.append(
+                        f"interface {interface} -> no shutdown (administratively down)"
+                    )
                 else:
-                    lines.append(stripped)
-            else:
-                current_context = stripped
-                lines.append(current_context)
+                    # Up/down or down/down: the cause is the cable peer, the
+                    # switch port or the parent interface, not this command.
+                    missing.append(
+                        f"interface {interface} is operationally down "
+                        f"({status}, line protocol is {protocol})"
+                    )
 
-        return set(lines)
+        if any(line.startswith("router ospf ") for line in expected):
+            if not network.ospf_neighbors(self.node_name):
+                missing.append("OSPF: no FULL neighbor adjacency")
 
-    def _connect(self) -> ConnectHandler:
-        netmiko_device_type = self.node_config["device_type"]
-        if netmiko_device_type in ["cisco_iol_l2", "cisco_iol"]:
-            netmiko_device_type = "cisco_ios_telnet"
+        if any(line.startswith("ntp server ") for line in expected):
+            info = network.ntp_info(self.node_name)
+            if not info["synchronized"]:
+                missing.append(
+                    "NTP: clock is not synchronized with an authenticated server"
+                )
 
-        console_password = self.node_config.get("console_password", "")
-        enable_secret = self.node_config.get("enable_secret", "")
+        groups: Dict[int, Set[str]] = {}
+        for line in expected:
+            match = re.match(
+                r"^interface\s+(\S+) -> channel-group\s+(\d+)\s+mode\s+active$",
+                line,
+            )
+            if match:
+                interface = canonical_interface(match.group(1))
+                if (
+                    interface_parent(interface) is None
+                    and not interface.startswith(("Port-channel", "Vlan", "Loopback"))
+                ):
+                    groups.setdefault(int(match.group(2)), set()).add(interface)
+                continue
+            match = re.search(r"channel-group\s+(\d+)\s+mode\s+active$", line)
+            if match:
+                groups.setdefault(int(match.group(1)), set())
+        for group in sorted(groups):
+            status = network.channel_status(self.node_name, group)
+            if not status["formed"]:
+                missing.append(f"EtherChannel {group}: LACP peer is not formed")
+            for interface in sorted(groups[group], key=natural_key):
+                if status["members"].get(interface) is not True:
+                    missing.append(
+                        f"EtherChannel {group}: expected member {interface} is not bundled/up"
+                    )
 
-        host = self.node_config["host"]
-        port = int(self.node_config["console_port"])
-
-        # Send Ctrl-Z to escape any config mode BEFORE Netmiko opens its session
-        import socket as _socket
-        try:
-            s = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
-            s.settimeout(3)
-            s.connect((host, port))
-            time.sleep(0.3)
-            s.sendall(b"\x15")   # Ctrl-U: clear partial input
-            time.sleep(0.1)
-            s.sendall(b"\x1A")   # Ctrl-Z: exit ANY config sub-mode to enable#
-            time.sleep(0.8)
-            s.sendall(b"\r\n")
-            time.sleep(0.3)
-            s.close()
-            time.sleep(0.5)      # Give IOS a moment to settle before Netmiko connects
-        except Exception as e:
-            logger.warning(f"Pre-connect cleanup failed for {self.node_name}: {e}")
-
-        device = {
-            "device_type": netmiko_device_type,
-            "host": host,
-            "port": port,
-            "username": "",
-            "password": console_password,
-            "secret": enable_secret,
-            "global_delay_factor": 2,
-            "timeout": 30,
-        }
-        return ConnectHandler(**device)
-
-
-    def fetch_actual_config(self, connection: ConnectHandler) -> str:
-        """Fetch running config from the device. Base implementation."""
-        if not connection.check_enable_mode():
-            connection.enable()
-            
-        connection.send_command("terminal length 0", read_timeout=10)
-        return connection.send_command("show run", read_timeout=60)
+        ssh_markers = (
+            "ip ssh version 2",
+            "login local",
+            "transport input ssh",
+        )
+        if all(any(marker in line for line in expected) for marker in ssh_markers):
+            node = self.snapshot.nodes[self.node_name]
+            if not node.domain_name or node.rsa_bits is None:
+                missing.append("SSH: domain name and generated RSA keys are required")
+            elif node.rsa_bits != 2048:
+                missing.append(
+                    f"SSH: RSA modulus must be exactly 2048 bits (configured {node.rsa_bits})"
+                )
+        return missing
 
     def grade(self) -> dict:
         if not os.path.exists(self.solution_path):
-            logger.info(f"Skipping {self.node_name}: no solution file.")
-            return {"node": self.node_name, "passed": True, "error": f"No solution file found. Skipping."}
-
-        with open(self.solution_path, "r") as f:
-            solution_text = f.read()
-
-        connection = None
-        try:
-            connection = self._connect()
-            actual_text = self.fetch_actual_config(connection)
-            
-            expected_set = self.sanitize_config(solution_text)
-            actual_set = self.sanitize_config(actual_text)
-            
-            missing_lines = []
-            for expected_line in expected_set:
-                matched = False
-                exp_norm = " ".join(expected_line.split()).lower()
-                for actual_line in actual_set:
-                    act_norm = " ".join(actual_line.split()).lower()
-                    if exp_norm == act_norm:
-                        matched = True
-                        break
-                    # If expected is a subcommand without context (e.g. "ip address 1.1.1.1 255.255.255.0")
-                    # but actual has context (e.g. "interface ethernet0/0 -> ip address 1.1.1.1 255.255.255.0")
-                    if " -> " in act_norm:
-                        parts = act_norm.split(" -> ", 1)
-                        if len(parts) == 2 and exp_norm == parts[1].strip():
-                            matched = True
-                            break
-                if not matched:
-                    missing_lines.append(expected_line)
-
-            passed = len(missing_lines) == 0
-
+            kind = str(self.node_config.get("kind", "")).lower()
+            if self.snapshot is not None and self.node_name in self.snapshot.nodes:
+                kind = self.snapshot.nodes[self.node_name].kind
+            if kind == "host" or str(self.node_config.get("device_type", "")).lower() == "vpcs":
+                return {
+                    "node": self.node_name,
+                    "passed": True,
+                    "missing_lines": [],
+                    "error": "No solution file found for host. Skipping.",
+                }
             return {
                 "node": self.node_name,
-                "passed": passed,
-                "missing_lines": missing_lines
+                "passed": False,
+                "missing_lines": [f"Required solution file is missing: {os.path.basename(self.solution_path)}"],
+                "error": "Required solution file is missing.",
             }
-        except (NetMikoTimeoutException, ConnectionRefusedError) as e:
-            logger.error(f"Connection failed for {self.node_name}: {e}")
-            return {"node": self.node_name, "passed": False, "error": f"Could not connect to {self.node_name}."}
-        except Exception as e:
-            logger.exception(f"Grading failed for {self.node_name}")
-            return {"node": self.node_name, "passed": False, "error": str(e)}
-        finally:
-            if connection:
-                connection.disconnect()
+        if self.snapshot is None:
+            return {
+                "node": self.node_name,
+                "passed": False,
+                "missing_lines": ["Simulator snapshot is required"],
+                "error": "Simulator snapshot is required.",
+            }
+        if self.node_name not in self.snapshot.nodes:
+            return {
+                "node": self.node_name,
+                "passed": False,
+                "missing_lines": [f"Node {self.node_name} is absent from the simulator"],
+                "error": "Simulator node missing.",
+            }
+
+        with open(self.solution_path, "r", encoding="utf-8") as handle:
+            solution_text = handle.read()
+        expected = self.sanitize_config(solution_text)
+        expected_display = normalise_config(
+            solution_text, canonicalize_credentials=False
+        )
+        display_by_canonical = {
+            _canonicalize_display_entry(line): line for line in expected_display
+        }
+        actual = self.sanitize_config(self.snapshot.running_config(self.node_name))
+        node = self.snapshot.nodes[self.node_name]
+        missing: List[str] = []
+        for token in sorted(expected):
+            if token in actual:
+                continue
+            display = display_by_canonical.get(token, token)
+            if _requirement_satisfied(node, token, display):
+                continue
+            missing.append(display)
+        for requirement in self._operational_requirements(expected):
+            if requirement not in missing:
+                missing.append(requirement)
+        return {
+            "node": self.node_name,
+            "passed": not missing,
+            "missing_lines": missing,
+            "error": "",
+        }
 
 
 class IOSGrader(BaseGrader):
-    def fetch_actual_config(self, connection: ConnectHandler) -> str:
-        """Override to also fetch VLAN database for Cisco IOS devices."""
-        actual_text = super().fetch_actual_config(connection)
-        
-        device_type = self.node_config.get("device_type", "")
-        if "cisco_iol_l2" in device_type:
-            try:
-                vlan_text = connection.send_command("show vlan brief", read_timeout=10)
-                for line in vlan_text.splitlines():
-                    parts = line.strip().split()
-                    if parts and parts[0].isdigit():
-                        vid = int(parts[0])
-                        if vid not in [1, 1002, 1003, 1004, 1005]:
-                            actual_text += f"\nvlan {vid}\n"
-            except Exception as e:
-                logger.warning(f"Failed to fetch VLANs for {self.node_name}: {e}")
-            
-        return actual_text
+    """Name retained for compatibility; canonical snapshots include VLAN state."""
+
+
+def get_grader_for_device(
+    node_name: str,
+    node_config: dict,
+    solution_path: str,
+    snapshot: Optional[SimulationSnapshot] = None,
+) -> BaseGrader:
+    device_type = str(node_config.get("device_type", ""))
+    kind = str(node_config.get("kind", ""))
+    if "cisco" in device_type or kind in {"router", "switch"}:
+        return IOSGrader(node_name, node_config, solution_path, snapshot=snapshot)
+    return BaseGrader(node_name, node_config, solution_path, snapshot=snapshot)
 
 
 class BehavioralGrader:
-    def __init__(self, node_name: str, node_config: dict, checks: list):
+    def __init__(
+        self,
+        node_name: str,
+        node_config: dict,
+        checks: list,
+        snapshot: Optional[SimulationSnapshot] = None,
+    ) -> None:
         self.node_name = node_name
         self.node_config = node_config
         self.checks = checks
+        self.snapshot = snapshot
+
+    def _target_addresses(self, value: object) -> List[str]:
+        if self.snapshot is None:
+            return []
+        target = str(value or "").strip()
+        if not target:
+            return []
+        network = self.snapshot.network()
+        if target in self.snapshot.nodes:
+            endpoints = sorted(
+                (
+                    endpoint
+                    for endpoint in network.ip_endpoints()
+                    if endpoint.node == target
+                ),
+                key=lambda item: (int(item.address), natural_key(item.interface)),
+            )
+            return [str(endpoint.address) for endpoint in endpoints]
+        try:
+            address = ipaddress.IPv4Address(target)
+        except ipaddress.AddressValueError:
+            return []
+        return [str(address)] if network.find_ip(str(address)) is not None else []
+
+    def _check_ping(self, check: dict) -> Optional[str]:
+        target = str(check.get("target", "")).strip()
+        if not target:
+            return "missing required target"
+        try:
+            target = str(ipaddress.IPv4Address(target))
+        except ipaddress.AddressValueError:
+            return "target is not a valid IPv4 address"
+        if not self.snapshot.can_reach(self.node_name, target):
+            return f"target {target} is unreachable"
+        return None
+
+    def _check_dhcp(self, check: dict) -> Optional[str]:
+        node = self.snapshot.nodes[self.node_name]
+        if node.kind != "host":
+            return "DHCP checks require a host node"
+        interfaces = sorted(
+            (
+                interface
+                for interface in node.interfaces.values()
+                if interface_parent(interface.name) is None
+                and not interface.name.startswith(("Vlan", "Loopback", "Port-channel"))
+            ),
+            key=lambda item: natural_key(item.name),
+        )
+        if not interfaces:
+            return "host has no interface"
+        interface = interfaces[0]
+        if not node.dhcp_enabled or interface.address_source != "dhcp":
+            return "host interface did not learn its address through DHCP"
+        if not self.snapshot.network().interface_oper_up(node.name, interface.name):
+            return "DHCP host interface is not operationally up"
+        try:
+            lease = ipaddress.IPv4Interface(
+                f"{interface.ip_address}/{interface.netmask}"
+            )
+        except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError):
+            return "DHCP lease does not contain a valid IPv4 address and mask"
+        if lease.ip.is_unspecified or lease.ip.is_multicast:
+            return "DHCP lease is not a valid unicast host address"
+        if lease.network.prefixlen < 31 and lease.ip in {
+            lease.network.network_address,
+            lease.network.broadcast_address,
+        }:
+            return "DHCP lease is not a usable host address"
+        if not node.default_gateway:
+            return "DHCP did not learn a default gateway"
+        try:
+            learned_gateway = ipaddress.IPv4Address(node.default_gateway)
+        except ipaddress.AddressValueError:
+            return "DHCP learned an invalid default gateway"
+        if learned_gateway.is_unspecified or learned_gateway.is_multicast:
+            return "DHCP learned an invalid default gateway"
+        if learned_gateway not in lease.network:
+            return "DHCP default gateway is outside the learned subnet"
+        if lease.network.prefixlen < 31 and learned_gateway in {
+            lease.network.network_address,
+            lease.network.broadcast_address,
+        }:
+            return "DHCP learned an invalid default gateway"
+
+        expected_network = check.get("network")
+        if expected_network:
+            try:
+                required_network = ipaddress.IPv4Network(
+                    str(expected_network), strict=False
+                )
+            except (ipaddress.AddressValueError, ipaddress.NetmaskValueError, ValueError):
+                return "check defines an invalid DHCP network"
+            if lease.network != required_network:
+                return (
+                    f"DHCP lease is on {lease.network.with_prefixlen}, expected "
+                    f"{required_network.with_prefixlen}"
+                )
+        expected_gateway = check.get("gateway")
+        if expected_gateway:
+            try:
+                required_gateway = ipaddress.IPv4Address(str(expected_gateway))
+            except ipaddress.AddressValueError:
+                return "check defines an invalid DHCP gateway"
+            if learned_gateway != required_gateway:
+                return (
+                    f"DHCP learned gateway {learned_gateway}, expected "
+                    f"{required_gateway}"
+                )
+        return None
+
+    def _check_ping_node(self, check: dict) -> Optional[str]:
+        target_node = str(check.get("target_node", "")).strip()
+        if not target_node:
+            return "missing required target_node"
+        if target_node not in self.snapshot.nodes:
+            return f"target_node '{target_node}' does not exist"
+        network = self.snapshot.network()
+        addresses = self._target_addresses(target_node)
+        if not addresses:
+            return f"target_node '{target_node}' has no active IPv4 address"
+        if not any(network.can_reach(self.node_name, address) for address in addresses):
+            return f"target_node '{target_node}' is unreachable"
+        return None
+
+    def _check_ssh(self, check: dict) -> Optional[str]:
+        target = str(check.get("target", "")).strip()
+        username = str(check.get("username", "")).strip()
+        password = check.get("password")
+        if not target:
+            return "missing required target"
+        if not username:
+            return "missing required username"
+        if not isinstance(password, str) or not password:
+            return "missing required password"
+        addresses = self._target_addresses(target)
+        if not addresses:
+            return f"target '{target}' has no active IPv4 address"
+        network = self.snapshot.network()
+        reasons: List[str] = []
+        for address in addresses:
+            allowed, reason = network.ssh_authenticate(
+                self.node_name, username, password, address
+            )
+            if allowed:
+                return None
+            reasons.append(reason)
+        return reasons[0] if reasons else "SSH authentication failed"
+
+    def _check_telnet_refused(self, check: dict) -> Optional[str]:
+        target = str(check.get("target", "")).strip()
+        if not target:
+            return "missing required target"
+        addresses = self._target_addresses(target)
+        if not addresses:
+            return f"target '{target}' has no active IPv4 address"
+        network = self.snapshot.network()
+        reachable = False
+        for address in addresses:
+            if not network.can_reach(self.node_name, address):
+                continue
+            reachable = True
+            allowed, reason = network.telnet_allowed(self.node_name, address)
+            if not allowed and reason == "Connection refused by remote host":
+                return None
+            if allowed:
+                return "Telnet is permitted by the target VTY transport policy"
+        if not reachable:
+            return "target is unreachable, so Telnet refusal was not verified"
+        return "Telnet was not specifically refused by VTY transport policy"
 
     def grade(self) -> dict:
-        if not self.checks:
-            return {"node": self.node_name, "passed": True, "missing_lines": []}
-
-        import socket
-        import time
-        missing_lines = []
-        host = self.node_config.get("host")
-        port_val = self.node_config.get("console_port")
-        if not host or not port_val:
-             return {"node": self.node_name, "passed": False, "missing_lines": ["Missing host/port for node"]}
-        port = int(port_val)
-
-        for check in self.checks:
-            if check.get("type") == "ping":
-                target = check.get("target")
-                desc = check.get("description", f"Ping {target}")
-                
-                try:
-                    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-                    s.settimeout(3)
-                    s.connect((host, port))
-                    
-                    s.sendall(b"\r\n")
-                    time.sleep(0.5)
-                    # flush the prompt
-                    s.recv(1024)
-                    
-                    cmd = f"ping {target}\r\n"
-                    s.sendall(cmd.encode("utf-8"))
-                    
-                    end_time = time.time() + 5
-                    output = ""
-                    success = False
-                    while time.time() < end_time:
-                        try:
-                            data = s.recv(1024).decode("utf-8", errors="ignore")
-                            output += data
-                            # VPCS ping success is "bytes from", IOS ping success contains "!"
-                            if "bytes from" in output.lower() or "!" in output:
-                                success = True
-                                break
-                            if "not reachable" in output.lower() or "timeout" in output.lower() or "." in output:
-                                break
-                        except socket.timeout:
-                            break
-                    s.close()
-                    
-                    if not success:
-                        missing_lines.append(f"Connectivity: {desc} failed.")
-                except Exception as e:
-                    logger.error(f"Behavioral grading failed for {self.node_name}: {e}")
-                    missing_lines.append(f"Connectivity: {desc} failed (Connection Error).")
-                    
-        passed = len(missing_lines) == 0
+        missing: List[str] = []
+        if self.snapshot is None:
+            missing.append("Behavioral grading requires a simulator snapshot")
+        else:
+            handlers = {
+                "ping": self._check_ping,
+                "dhcp": self._check_dhcp,
+                "ping_node": self._check_ping_node,
+                "ssh": self._check_ssh,
+                "telnet_refused": self._check_telnet_refused,
+            }
+            for check in self.checks:
+                check_type = str(check.get("type", "")).strip().lower()
+                description = check.get("description") or check_type or "unnamed check"
+                handler = handlers.get(check_type)
+                if handler is None:
+                    missing.append(
+                        f"Unsupported behavioral check type '{check.get('type', '')}': {description}"
+                    )
+                    continue
+                reason = handler(check)
+                if reason:
+                    missing.append(f"Behavioral check failed: {description} ({reason}).")
         return {
             "node": self.node_name,
-            "passed": passed,
-            "missing_lines": missing_lines
+            "passed": not missing,
+            "missing_lines": missing,
+            "error": "" if not missing else "Behavioral verification failed.",
         }
 
-def get_grader_for_device(node_name: str, node_config: dict, solution_path: str) -> BaseGrader:
-    """Factory to return the correct grader class based on device type."""
-    device_type = node_config.get("device_type", "")
-    if "cisco_iol" in device_type or "cisco_ios" in device_type:
-        return IOSGrader(node_name, node_config, solution_path)
-    return BaseGrader(node_name, node_config, solution_path)
 
-
-def grade_lab(yaml_path: str, skip_tasks: list = None, lab_dir: str = None) -> dict:
-    lab_def = load_lab_definition(yaml_path)
-    lab_info = lab_def["lab"]
-    
+def grade_lab(
+    yaml_path: str,
+    skip_tasks: list = None,
+    lab_dir: str = None,
+    snapshot: Optional[SimulationSnapshot] = None,
+) -> dict:
+    """Grade config subsets and behavior against one immutable snapshot."""
+    del skip_tasks  # Current manifests do not map checks/config to task IDs.
+    lab_definition = load_lab_definition(yaml_path)
+    lab_info = lab_definition["lab"]
     if not lab_dir:
         lab_dir = os.path.dirname(os.path.abspath(yaml_path))
 
-    nodes_map = {node["name"]: node for node in lab_info["nodes"]}
-    all_results = []
-    
-    behavioral_checks = lab_info.get("checks", [])
-    node_checks_map = {}
-    for check in behavioral_checks:
-        n = check.get("node")
-        if n:
-            node_checks_map.setdefault(n, []).append(check)
-            
-    # Track overall behavioral success
-    behavioral_ran = len(behavioral_checks) > 0
-    behavioral_passed = True
+    node_configs = {node["name"]: node for node in lab_info.get("nodes", [])}
+    checks_by_node = {}
+    unknown_node_checks = []
+    for check in lab_info.get("checks", []) or []:
+        node_name = check.get("node")
+        if node_name not in node_configs:
+            unknown_node_checks.append(check)
+        else:
+            checks_by_node.setdefault(node_name, []).append(check)
 
-    for node_name, node_config in nodes_map.items():
+    results = []
+    for node_name, node_config in node_configs.items():
         solution_path = os.path.join(lab_dir, f"solution_{node_name}.cfg")
-        
-        # 1. Config grading
-        grader = get_grader_for_device(node_name, node_config, solution_path)
+        grader = get_grader_for_device(
+            node_name, node_config, solution_path, snapshot=snapshot
+        )
         result = grader.grade()
-        
-        # 2. Behavioral grading
-        if node_name in node_checks_map:
-            b_grader = BehavioralGrader(node_name, node_config, node_checks_map[node_name])
-            b_result = b_grader.grade()
-            
-            if not b_result["passed"]:
-                behavioral_passed = False
-                
-            if result.get("error", "").startswith("No solution file"):
-                result = b_result
-            else:
-                # Merge hybrid results (initially)
-                result["missing_lines"].extend(b_result.get("missing_lines", []))
-                result["passed"] = result["passed"] and b_result["passed"]
-                if "error" in b_result:
-                    result["error"] = result.get("error", "") + " " + b_result["error"]
-                    
-        all_results.append(result)
+        result.setdefault("missing_lines", [])
+        result.setdefault("error", "")
+        if node_name in checks_by_node:
+            behavioral = BehavioralGrader(
+                node_name,
+                node_config,
+                checks_by_node[node_name],
+                snapshot=snapshot,
+            ).grade()
+            result["missing_lines"].extend(behavioral["missing_lines"])
+            result["passed"] = bool(result["passed"] and behavioral["passed"])
+            if behavioral["error"]:
+                result["error"] = " ".join(
+                    value for value in (result.get("error", ""), behavioral["error"]) if value
+                )
+        results.append(result)
 
-    # 3. Behavioral Override: If behavioral checks ran and ALL passed, override config failures for the whole lab
-    if behavioral_ran and behavioral_passed:
-        for r in all_results:
-            r["passed"] = True
-            r["missing_lines"] = []
-            if "No solution file" not in r.get("error", ""):
-                r["error"] = ""
+    for check in unknown_node_checks:
+        node_name = str(check.get("node", ""))
+        results.append(
+            {
+                "node": node_name,
+                "passed": False,
+                "missing_lines": [
+                    f"Behavioral check references unknown node '{node_name}'"
+                ],
+                "error": "Invalid lab check definition.",
+            }
+        )
 
-    passed = all(r["passed"] for r in all_results) if all_results else False
-
+    passed = bool(results) and all(result["passed"] for result in results)
     return {
         "lab_id": lab_info["id"],
         "lab_title": lab_info["title"],
@@ -394,5 +751,5 @@ def grade_lab(yaml_path: str, skip_tasks: list = None, lab_dir: str = None) -> d
         "total_possible": 100,
         "percentage": 100 if passed else 0,
         "passed": passed,
-        "node_results": all_results,
+        "node_results": results,
     }

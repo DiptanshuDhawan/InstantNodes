@@ -5,14 +5,20 @@ __pycache__/
 .env
 venv/
 .venv/
+.pytest_cache/
+.coverage
 
 # Node
 node_modules/
 .next/
 .env.local
 
-# GNS3
+# Runtime logs and state
 *.log
+*.pid
+/data/
+/runtime/
+backend/runtime/
 
 # OS
 .DS_Store
@@ -24,9 +30,16 @@ images/*.image
 images/IOU/
 *.md5sum
 
-# Databases
+# Databases and SQLite sidecars
 *.db
 *.sqlite
+*.sqlite3
+*.db-journal
+*.db-shm
+*.db-wal
+*.sqlite-journal
+*.sqlite-shm
+*.sqlite-wal
 
 # Ignore marketing docs
 marketing/

@@ -1,50 +1,52 @@
-
 services:
-  frontend:
-    build:
-      context: ./frontend
-    container_name: netlabx-frontend
-    ports:
-      - "3000:3000"
-    depends_on:
-      - backend
-    environment:
-      - NEXT_PUBLIC_API_URL=http://localhost:8000
-    restart: unless-stopped
-
   backend:
     build:
       context: ./backend
-    container_name: netlabx-backend
     ports:
       - "8000:8000"
     environment:
-      - GNS3_HOST=gns3-server
-      - FRONTEND_URL=http://localhost:3000
-      - LABS_DIR=./labs
+      DATABASE_PATH: /data/netlabx.db
+      LEGACY_DATABASE_PATH: /legacy-data/netlabx.db
+      LABS_DIR: /app/labs
     volumes:
-      # Persist the database and labs between container restarts
-      - ./backend/db:/app/db
-      - ./labs:/app/labs
-      - ./images:/app/images
-    depends_on:
-      - gns3-server
+      - netlabx-data:/data
+      - ./backend/db:/legacy-data:ro
+      - ./labs:/app/labs:ro
+    healthcheck:
+      test:
+        - CMD
+        - python
+        - -c
+        - "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health/ready', timeout=3).close()"
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
     restart: unless-stopped
 
-  gns3-server:
-    build: ./gns3-server
-    container_name: gns3-server
-    hostname: gns3-server
-    command: sh -c "python3 /tmp/keygen.py && gns3server --host 0.0.0.0 --port 3080 -A"
-    privileged: true
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-}
     ports:
-      - "3080:3080"
-      - "5000-5040:5000-5040" # Console ports for IOU/IOL devices
-    volumes:
-      # Mount images folder directly so users can drop Cisco images here
-      - ./images:/root/GNS3/images/IOU
-      - gns3-data:/root/GNS3
+      - "3000:3000"
+    depends_on:
+      backend:
+        condition: service_healthy
+    environment:
+      NEXT_PUBLIC_API_URL: ${NEXT_PUBLIC_API_URL:-http://localhost:8000}
+    healthcheck:
+      test:
+        - CMD
+        - node
+        - -e
+        - "fetch('http://127.0.0.1:3000').then(response => process.exit(response.ok ? 0 : 1)).catch(() => process.exit(1))"
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     restart: unless-stopped
 
 volumes:
-  gns3-data:
+  netlabx-data:

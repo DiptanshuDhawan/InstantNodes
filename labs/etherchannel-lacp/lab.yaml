@@ -24,21 +24,17 @@ lab:
 
   nodes:
     - name: S1
-      host: 100.120.167.31
-      console_port: 5000
-      device_type: cisco_iol_l2
+      kind: switch
+      cli_profile: ios
     - name: S2
-      host: 100.120.167.31
-      console_port: 5001
-      device_type: cisco_iol_l2
+      kind: switch
+      cli_profile: ios
     - name: PC1
-      host: 100.120.167.31
-      console_port: 5002
-      device_type: vpcs
+      kind: host
+      cli_profile: vpcs
     - name: PC2
-      host: 100.120.167.31
-      console_port: 5003
-      device_type: vpcs
+      kind: host
+      cli_profile: vpcs
 
   tasks:
     - id: 1
@@ -87,9 +83,9 @@ lab:
         - **PC2**: `10.10.10.2/24`
 
         1. From **PC1**, run `ping 10.10.10.2` to verify traffic is flowing across the EtherChannel trunk.
-        2. From **PC1**, run `show etherchannel summary` on S1 to confirm the Port-channel shows `SU` (layer2, in use) and both member links show `P` (bundled in port-channel).
+        2. In the **S1** terminal, run `show etherchannel summary` to confirm the Port-channel shows `SU` (layer2, in use) and both member links show `P` (bundled in port-channel).
       hint: |
-        A healthy EtherChannel shows flags `SU` on the Port-channel line and `P` on each member interface. If you see `SD` or `I`, the bundle is not negotiating — check that both sides use `mode active`.
+        A healthy EtherChannel shows flags `SU` on the Port-channel line and `P` on each member interface. If you see `SD` on the Port-channel line, or `s` (suspended) or `I` (stand-alone) on a member, the bundle is not negotiating — check that both sides use `mode active`.
 
 
   links:

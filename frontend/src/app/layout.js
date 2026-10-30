@@ -2,7 +2,7 @@ import './globals.css';
 
 export const metadata = {
   title: 'InstantNodes',
-  description: 'Interactive network lab emulation platform.',
+  description: 'Interactive native network simulation platform.',
 };
 
 export default function RootLayout({ children }) {

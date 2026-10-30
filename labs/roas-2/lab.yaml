@@ -1,5 +1,5 @@
 lab:
-  id: comprehensive-lab
+  id: roas-2
   title: "Lab 05 — Router on a Stick II"
   topic: Routing & Switching
   difficulty: Advanced
@@ -24,33 +24,26 @@ lab:
     description: Create a DHCP pool
   nodes:
   - name: R1
-    host: 100.120.167.31
-    console_port: 5000
-    device_type: cisco_ios_telnet
+    kind: router
+    cli_profile: ios
   - name: S1
-    host: 100.120.167.31
-    console_port: 5001
-    device_type: cisco_iol_l2
+    kind: switch
+    cli_profile: ios
   - name: S2
-    host: 100.120.167.31
-    console_port: 5002
-    device_type: cisco_iol_l2
+    kind: switch
+    cli_profile: ios
   - name: PC0
-    host: 100.120.167.31
-    console_port: 5003
-    device_type: vpcs
+    kind: host
+    cli_profile: vpcs
   - name: PC1
-    host: 100.120.167.31
-    console_port: 5004
-    device_type: vpcs
+    kind: host
+    cli_profile: vpcs
   - name: PC2
-    host: 100.120.167.31
-    console_port: 5005
-    device_type: vpcs
+    kind: host
+    cli_profile: vpcs
   - name: PC3
-    host: 100.120.167.31
-    console_port: 5006
-    device_type: vpcs
+    kind: host
+    cli_profile: vpcs
   tasks:
   - id: 1
     description: Inter-Switch Trunking (S1 & S2)
@@ -110,7 +103,8 @@ lab:
     hint: Use `encapsulation dot1Q <vlan>` before assigning the IP address.
   - id: 5
     description: DHCP Services (R1)
-    instructions: 'Configure **R1** to act as a DHCP server for all three VLANs.
+    instructions: 'Configure **R1** to act as a DHCP server for all three VLANs, then
+      request and verify a lease on every PC.
 
 
       1. Create DHCP pool `VLAN10` for network `192.168.10.0/24` (default router `192.168.10.1`).
@@ -119,9 +113,25 @@ lab:
 
       3. Create DHCP pool `VLAN30` for network `192.168.30.0/24` (default router `192.168.30.1`).
 
+      4. After all three pools are configured, open **PC0**, **PC1**, **PC2**, and **PC3**
+      and run `ip dhcp` on each PC.
+
+      5. Run `show ip` on every PC and record each DHCP address before cross-host tests.
+      Confirm that PC0 is in `192.168.10.0/24`, PC1 and PC3 are in `192.168.20.0/24`,
+      and PC2 is in `192.168.30.0/24`; also confirm each PC learned its subnet gateway.
+
+      6. Verify the learned gateways by running `ping 192.168.10.1` on PC0, `ping
+      192.168.20.1` on PC1, `ping 192.168.30.1` on PC2, and `ping 192.168.20.1` on PC3.
+
+      7. Using the DHCP addresses identified with `show ip`, ping PC2 from PC0 and PC0
+      from PC2 to verify routing between VLANs 10 and 30. Then ping PC3 from PC1 and
+      PC1 from PC3 to verify VLAN 20 traffic crosses the inter-switch trunk in both
+      directions.
+
       '
-    hint: Use `ip dhcp pool <name>`, then `network <ip> <mask>` and `default-router
-      <ip>`.
+    hint: Configure each pool with `ip dhcp pool <name>`, `network <ip> <mask>`, and
+      `default-router <ip>`. Use `ip dhcp`, then `show ip`, on every PC before running
+      the gateway and cross-host pings.
   links:
   - - S1
     - Ethernet0/0
@@ -149,6 +159,26 @@ lab:
     - Ethernet0/0
   checks:
   - node: PC0
+    type: dhcp
+    network: 192.168.10.0/24
+    gateway: 192.168.10.1
+    description: "PC0 receives a VLAN10 address and gateway through DHCP"
+  - node: PC1
+    type: dhcp
+    network: 192.168.20.0/24
+    gateway: 192.168.20.1
+    description: "PC1 receives a VLAN20 address and gateway through DHCP"
+  - node: PC2
+    type: dhcp
+    network: 192.168.30.0/24
+    gateway: 192.168.30.1
+    description: "PC2 receives a VLAN30 address and gateway through DHCP"
+  - node: PC3
+    type: dhcp
+    network: 192.168.20.0/24
+    gateway: 192.168.20.1
+    description: "PC3 receives a VLAN20 address and gateway through DHCP"
+  - node: PC0
     type: ping
     target: 192.168.10.1
     description: "PC0 (VLAN10) pings R1 VLAN10 gateway - Subinterface reachable"
@@ -164,3 +194,19 @@ lab:
     type: ping
     target: 192.168.20.1
     description: "PC3 (VLAN20 via S2) pings R1 VLAN20 gateway - Subinterface reachable"
+  - node: PC0
+    type: ping_node
+    target_node: PC2
+    description: "PC0 reaches PC2 across VLANs 10 and 30"
+  - node: PC2
+    type: ping_node
+    target_node: PC0
+    description: "PC2 reaches PC0 across VLANs 30 and 10"
+  - node: PC1
+    type: ping_node
+    target_node: PC3
+    description: "PC1 reaches same-VLAN PC3 across the inter-switch trunk"
+  - node: PC3
+    type: ping_node
+    target_node: PC1
+    description: "PC3 reaches same-VLAN PC1 across the inter-switch trunk"
