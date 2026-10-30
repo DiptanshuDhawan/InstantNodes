@@ -155,7 +155,14 @@ def _switchport_access_vlan(ctx):
         iface.access_vlan = vlan
         iface.configured = True
     ctx.mark_dirty()
-    return None
+    node = ctx.node
+    if vlan in node.vlans or vlan in _RESERVED_VLANS or node.vtp_mode == "client":
+        # A VTP client cannot create VLANs: IOS keeps the port setting, and the
+        # port stays inactive until the VLAN arrives.
+        return None
+    # IOS (VTP server or transparent) creates a missing access VLAN.
+    node.vlans[vlan] = f"VLAN{vlan:04d}"
+    return f"% Access VLAN does not exist. Creating vlan {vlan}"
 
 
 @command(
