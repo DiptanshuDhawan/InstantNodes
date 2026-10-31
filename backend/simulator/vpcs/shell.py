@@ -39,12 +39,12 @@ __all__ = ["VpcsShell", "WELCOME_TEXT"]
 #: Printed once when a console first starts on a VPCS host.
 WELCOME_TEXT = (
     "\n"
-    "VPCS-compatible virtual PC (NetSimX native simulator)\n"
+    "VPCS-compatible virtual PC (InstantNodes native simulator)\n"
     "Press '?' to get help.\n"
 )
 
 _VERSION_TEXT = (
-    "NetSimX VPCS-compatible virtual PC\n"
+    "InstantNodes VPCS-compatible virtual PC\n"
     "Command syntax follows VPCS 0.8 (ip, ping, trace, arp, save, load, show)."
 )
 

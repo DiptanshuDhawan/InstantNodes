@@ -1,8 +1,8 @@
-# NetSimX
+# InstantNodes
 
-NetSimX is a browser-based networking lab platform powered by a native, deterministic simulator. It runs without proprietary device images: the backend models a focused Cisco-like command set and network state directly in Python, while the frontend provides lab instructions, topology views, terminals, and grading.
+InstantNodes is a browser-based networking lab platform powered by a native, deterministic simulator. It runs without proprietary device images: the backend models a focused Cisco-like command set and network state directly in Python, while the frontend provides lab instructions, topology views, terminals, and grading.
 
-> NetSimX is a learning tool, not a device emulator. Its Cisco-like CLI is a deliberately supported subset; it does not run vendor software, perform real packet forwarding, or provide vendor-certified IOS behavior.
+> InstantNodes is a learning tool, not a device emulator. Its Cisco-like CLI is a deliberately supported subset; it does not run vendor software, perform real packet forwarding, or provide vendor-certified IOS behavior.
 
 ## Features
 
@@ -14,7 +14,7 @@ NetSimX is a browser-based networking lab platform powered by a native, determin
 
 The supported command and protocol surface is intentionally scoped to the bundled curriculum. It includes Cisco-like user, privileged, global-configuration, interface, line, and router modes; IPv4 interface configuration and basic reachability; VLAN access and trunk configuration; 802.1Q subinterfaces and router-on-a-stick; DHCP; single-area OSPF; NTP hierarchy and authentication; SSH/device-hardening configuration; and LACP EtherChannel state. Unsupported commands return simulator feedback rather than being passed to a real device.
 
-NetSimX currently ships with six labs:
+InstantNodes currently ships with six labs:
 
 1. Device Hardening & SSH
 2. OSPF Fundamentals
@@ -47,8 +47,8 @@ Simulator state for an active session is held in backend memory. Durable lab met
 Clone and start the application:
 
 ```bash
-git clone https://github.com/DiptanshuDhawan/NetSimX.git
-cd NetSimX
+git clone https://github.com/DiptanshuDhawan/InstantNodes.git
+cd InstantNodes
 docker compose up --build
 ```
 

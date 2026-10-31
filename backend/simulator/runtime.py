@@ -191,7 +191,7 @@ def _boot_text(node: NodeState, restored: bool) -> str:
         "",
         f"Reloading {node.name} ...",
         "",
-        f"NetSimX: booting simulated {image} image ... [OK]",
+        f"InstantNodes: booting simulated {image} image ... [OK]",
         f"{ethernet} Ethernet interface{'s' if ethernet != 1 else ''} initialized",
         (
             "Restoring startup-config from nvram ... [OK]"
