@@ -1,15 +1,42 @@
 "use client";
 
-import { use } from 'react';
+import { use, useEffect } from 'react';
+import Link from 'next/link';
+import { useRouter } from 'next/navigation';
 import { useLabSession } from '@/hooks/useLabSession';
+import { useAuth } from '@/components/auth/AuthProvider';
+import { loginHref } from '@/lib/authLinks';
 
 import TopNav from '@/components/lab/TopNav';
 import LabSidebar from '@/components/lab/LabSidebar';
 import Workspace from '@/components/lab/Workspace';
 import DevicePanel from '@/components/lab/DevicePanel';
 
-export default function LabEnvironment({ params }) {
+const centered = { height: '100vh', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' };
+
+// Labs run under the signed-in account: visitors are sent to sign in and come back here.
+export default function LabPage({ params }) {
   const { slug } = use(params);
+  const { status } = useAuth();
+  const router = useRouter();
+
+  useEffect(() => {
+    if (status === 'signed-out') router.replace(loginHref(`/labs/${slug}`));
+  }, [status, slug, router]);
+
+  if (status === 'signed-in') return <LabEnvironment slug={slug} />;
+  if (status === 'offline') {
+    return (
+      <div role="alert" style={centered}>
+        <strong style={{ color: '#fff' }}>The lab server did not respond.</strong>
+        <span style={{ color: 'var(--text-muted)', maxWidth: 640 }}>Check that it is running, then reload this page.</span>
+      </div>
+    );
+  }
+  return <div style={centered}>{status === 'signed-out' ? 'Opening the sign-in page…' : 'Loading Native Simulation...'}</div>;
+}
+
+function LabEnvironment({ slug }) {
   const sessionData = useLabSession(slug);
 
   if (sessionData.loading) {
@@ -21,6 +48,7 @@ export default function LabEnvironment({ params }) {
       <div role="alert" style={{ height: '100vh', display: 'flex', flexDirection: 'column', gap: 10, alignItems: 'center', justifyContent: 'center', padding: 24, textAlign: 'center' }}>
         <strong style={{ color: '#fff' }}>Native Simulation could not be loaded.</strong>
         <span style={{ color: 'var(--text-muted)', maxWidth: 640 }}>{sessionData.errorMsg || 'The lab definition is unavailable.'}</span>
+        <Link href="/labs" style={{ marginTop: 6, color: 'var(--in-blue-text)', fontWeight: 600 }}>Back to the labs</Link>
       </div>
     );
   }

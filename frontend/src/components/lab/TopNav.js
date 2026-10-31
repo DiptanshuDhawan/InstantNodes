@@ -1,12 +1,13 @@
 import React from 'react';
-import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import Logo from '@/components/site/Logo';
+import { AccountArea } from '@/components/site/SiteHeader';
+import siteStyles from '@/components/site/site.module.css';
 
 export default function TopNav({
   session, isBooting, labTimer, gradeReport, isGrading,
   handleStart, handleStop, handleGrade, setShowResetModal
 }) {
-  const router = useRouter();
-
   const formatTime = (totalSeconds) => {
     const h = Math.floor(totalSeconds / 3600);
     const m = Math.floor((totalSeconds % 3600) / 60).toString().padStart(2, '0');
@@ -19,16 +20,12 @@ export default function TopNav({
 
   return (
     <header className="nx-header">
-      {/* Left: logo + breadcrumbs */}
+      {/* Left: logo (home page) and the way back to the lab library */}
       <div className="nx-brand">
-        <div style={{ display: 'flex', flexDirection: 'column', justifyContent: 'center', cursor: 'pointer' }} onClick={() => router.push('/')}>
-          <span style={{ fontSize: '1.2rem', fontWeight: 800, letterSpacing: '0.2em', color: '#FFFFFF', lineHeight: 1, paddingLeft: '0.2em' }}>INSTANT</span>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginTop: '4px' }}>
-            <div style={{ height: '2px', flex: 1, backgroundColor: '#0284c7', borderRadius: '2px' }}></div>
-            <span style={{ fontSize: '0.6rem', fontWeight: 700, letterSpacing: '0.4em', color: '#0284c7', lineHeight: 1, paddingLeft: '0.4em' }}>NODES</span>
-            <div style={{ height: '2px', flex: 1, backgroundColor: '#0284c7', borderRadius: '2px' }}></div>
-          </div>
-        </div>
+        <Logo />
+        <nav className={siteStyles.workspaceNav} aria-label="Main">
+          <Link href="/labs" className={siteStyles.navLink}>Labs</Link>
+        </nav>
       </div>
 
       {/* Right: controls */}
@@ -85,7 +82,8 @@ export default function TopNav({
             <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
           </button>
         </div>
-        
+
+        <AccountArea />
       </div>
     </header>
   );

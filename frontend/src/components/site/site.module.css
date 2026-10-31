@@ -1,0 +1,202 @@
+/* Shared InstantNodes top bar: logo, main navigation and the account area.
+   Colour tokens (--in-*) live in globals.css; the fonts are set on <html> (layout.js). */
+
+.bar {
+  position: relative;
+  z-index: 20;
+  flex-shrink: 0;
+  height: 60px;
+  border-bottom: 1px solid var(--in-line);
+  background: rgba(22, 24, 26, 0.94);
+  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(10px);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+.barSticky {
+  position: sticky;
+  top: 0;
+}
+.inner {
+  display: flex;
+  align-items: center;
+  gap: 28px;
+  height: 100%;
+  padding: 0 20px;
+}
+.innerContained {
+  max-width: 1248px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+/* Logo: the N-path mark and the name. */
+.logo {
+  display: inline-flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  color: #fff;
+  text-decoration: none;
+}
+.wordmark {
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: 17px;
+  font-weight: 600;
+  font-stretch: 87%;
+  letter-spacing: -0.005em;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* Main navigation: the current section is underlined along the bottom edge of the bar. */
+.nav {
+  display: flex;
+  align-self: stretch;
+  gap: 2px;
+}
+.navLink {
+  position: relative;
+  display: flex;
+  align-items: center;
+  padding: 0 12px;
+  color: var(--in-text-2);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+  white-space: nowrap;
+  transition: color 0.15s ease;
+}
+.navLink:hover { color: var(--in-text); }
+.navLink[aria-current='page'] { color: var(--in-text); }
+.navLink[aria-current='page']::after {
+  content: '';
+  position: absolute;
+  right: 12px;
+  bottom: -1px;
+  left: 12px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: var(--in-blue-text);
+}
+
+.right {
+  display: flex;
+  align-items: center;
+  flex-shrink: 0;
+  gap: 10px;
+  margin-left: auto;
+}
+
+/* The lab workspace header (globals.css .nx-header): the logo, then a link back to the labs. */
+.workspaceNav {
+  display: flex;
+  align-items: center;
+  height: 28px;
+  padding-left: 4px;
+  border-left: 1px solid var(--in-line-strong);
+  font-family: var(--font-sans), ui-sans-serif, system-ui, sans-serif;
+}
+
+/* Account area */
+.actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+.placeholder {
+  width: 120px;
+  height: 34px;
+}
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 9px;
+  max-width: 220px;
+  height: 38px;
+  padding: 0 12px 0 4px;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+  border-radius: 999px;
+  color: var(--in-text);
+  font-size: 13px;
+  font-weight: 500;
+  text-decoration: none;
+  transition: background-color 0.15s ease, border-color 0.15s ease;
+}
+.chip:hover,
+.chip[aria-current='page'] {
+  border-color: var(--in-line-strong);
+  background: rgba(255, 255, 255, 0.04);
+}
+.chipName {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.avatar {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  border-radius: 50%;
+  background: #24456F;
+  color: #DCEBFF;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.02em;
+}
+
+.buttonSmall,
+.buttonQuietSmall {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  height: 34px;
+  padding: 0 14px;
+  border-radius: 10px;
+  font-size: 13px;
+  font-weight: 600;
+  white-space: nowrap;
+  text-decoration: none;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.buttonSmall {
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  background: linear-gradient(180deg, #2B6FE3 0%, #2360DA 100%);
+  color: #fff;
+}
+.buttonSmall:hover { background: linear-gradient(180deg, #2563EB 0%, #1D4ED8 100%); }
+.buttonQuietSmall {
+  border: 1px solid var(--in-line-strong);
+  color: var(--in-text);
+}
+.buttonQuietSmall:hover { background: rgba(255, 255, 255, 0.05); }
+
+.logo:focus-visible,
+.navLink:focus-visible,
+.chip:focus-visible,
+.buttonSmall:focus-visible,
+.buttonQuietSmall:focus-visible {
+  outline: 2px solid var(--in-blue-text);
+  outline-offset: 2px;
+  border-radius: 8px;
+}
+
+@media (max-width: 859px) {
+  .bar { height: 56px; }
+  .inner,
+  .innerContained {
+    gap: 14px;
+    padding: 0 12px 0 14px;
+  }
+  .navLink { padding: 0 8px; }
+  .navLink[aria-current='page']::after { right: 8px; left: 8px; }
+  .right { gap: 8px; }
+  .chip { padding-right: 4px; }
+  .chipName,
+  .hideNarrow { display: none; }
+}
+@media (max-width: 340px) {
+  .wordmark { display: none; }
+}

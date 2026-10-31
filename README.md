@@ -10,7 +10,7 @@ NetSimX is a browser-based networking lab platform powered by a native, determin
 - **Deterministic simulation:** repeatable device configuration, protocol state, reachability, and grading results.
 - **Browser terminal:** interact with modeled routers, switches, and hosts from the lab page.
 - **Guided labs:** YAML-defined objectives, instructions, topology, command references, and checks.
-- **Persistent progress:** SQLite stores lab metadata, session history, and grading results.
+- **Accounts and saved progress:** sign up with an email and password; each account keeps its completed labs, best scores, grade history and the lab it is running, on any device.
 
 The supported command and protocol surface is intentionally scoped to the bundled curriculum. It includes Cisco-like user, privileged, global-configuration, interface, line, and router modes; IPv4 interface configuration and basic reachability; VLAN access and trunk configuration; 802.1Q subinterfaces and router-on-a-stick; DHCP; single-area OSPF; NTP hierarchy and authentication; SSH/device-hardening configuration; and LACP EtherChannel state. Unsupported commands return simulator feedback rather than being passed to a real device.
 
@@ -54,6 +54,8 @@ docker compose up --build
 
 Open <http://localhost:3000>. The backend remains available at <http://localhost:8000> for browser compatibility. Compose waits for backend readiness before starting the frontend.
 
+The home page (`/`) shows how a lab works and what is simulated; **Browse the labs** opens the lab library (`/labs`), and each lab opens at `/labs/<slug>`.
+
 Useful commands:
 
 ```bash
@@ -63,6 +65,30 @@ docker compose down
 ```
 
 Health endpoints are available at `/health` (compatibility), `/health/live` (process liveness), and `/health/ready` (database access plus loaded labs).
+
+## Accounts
+
+Anyone can browse the lab catalogue; opening a lab needs an account. Create one from **Create account** on the home page (name, email, password of at least 8 characters). The account page (`/account`) shows progress per lab, changes the password and signs out on this or every device.
+
+How it works:
+
+- Passwords are hashed with scrypt (Python standard library). Common passwords, very short ones and the email address itself are refused.
+- Signing in sets an HttpOnly, SameSite=Lax cookie (`instantnodes_session`, 30 days). The database stores only a SHA-256 hash of the token. Changing the password signs out the account's other devices.
+- Lab sessions, consoles and grades belong to the account that started them; other accounts get `404 Session not found`. One lab runs per account at a time: starting another lab stops the previous one.
+- Repeated failed sign-ins are slowed down: 10 failures per email and network address in 15 minutes lock that pair for the rest of the window.
+- Email verification and password reset by email are not included yet (they need a mail server).
+
+Because the browser sends the cookie to the API, the API only accepts browser requests from the frontend origins it is told about. Configure the backend with these environment variables:
+
+| Variable | Default | Purpose |
+| --- | --- | --- |
+| `CORS_ORIGINS` | `http://localhost:3000,http://127.0.0.1:3000,http://localhost:3001,http://127.0.0.1:3001` | Comma-separated frontend origins. Add the address you open the app at, for example `http://192.168.1.20:3000` on a LAN. `*` is ignored. |
+| `COOKIE_SECURE` | `false` | Set to `true` when the app is served over HTTPS. |
+| `COOKIE_SAMESITE` | `lax` | Use `none` (with HTTPS) only if the frontend and API are on different sites. |
+| `AUTH_SESSION_DAYS` | `30` | How long a sign-in lasts. |
+| `AUTH_REGISTER_LIMIT` | `30` | Accounts that can be created per network address per hour. Raise it for a classroom behind one address. |
+
+The frontend and API must be reached through the same host name (both `localhost`, or both the same IP or domain); the cookie is not shared between different host names.
 
 ## Local development
 
@@ -168,7 +194,7 @@ Start from one of the six existing labs, keep the directory name stable, and use
 
 Docker Compose stores SQLite in the `netlabx-data` named volume at `/data/netlabx.db`. `docker compose down` retains this volume; `docker compose down -v` permanently removes it. The `labs/` directory is mounted read-only, so containers cannot modify authored lab content.
 
-On startup, the backend safely upgrades an existing database by adding neutral `runtime_id` and `generation` session fields when absent. The legacy project-identifier field remains in the schema for compatibility, but the native runtime does not depend on it. Active native sessions cannot survive a backend process restart, so clearly identified stale native sessions are marked stopped while ambiguous legacy records are left unchanged.
+On startup, the backend safely upgrades an existing database by adding neutral `runtime_id` and `generation` session fields when absent, and the account tables (`users`, `auth_sessions`) with `user_id` columns on sessions and results. Sessions and results recorded before accounts existed keep an empty `user_id` and do not count towards any account's progress. The legacy project-identifier field remains in the schema for compatibility, but the native runtime does not depend on it. Active native sessions cannot survive a backend process restart, so clearly identified stale native sessions are marked stopped while ambiguous legacy records are left unchanged.
 
 Older checkouts stored `backend/db/netlabx.db` through a host bind mount. Compose now mounts that directory read-only at `/legacy-data`. On the first native startup only, if `/data/netlabx.db` does not yet exist and the legacy file is a valid non-empty SQLite database, the backend copies it through SQLite's backup API, verifies it, and atomically installs it in the named volume. An existing `/data/netlabx.db` is never overwritten, and the legacy source is never modified; keep an external backup until the upgraded history has been verified.
 

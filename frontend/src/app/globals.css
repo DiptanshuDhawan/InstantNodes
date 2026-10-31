@@ -24,6 +24,22 @@
   --radius-input:  12px;
   --radius-sm:     10px;
   --radius-pill:   999px;
+
+  /* InstantNodes pages (home, sign-in, account): see .kiro/skills/instantnodes-ui. */
+  --in-panel:       #222428;
+  --in-raised:      #2A2D32;
+  --in-well:        #1A1C1E;
+  --in-line:        rgba(255, 255, 255, 0.07);
+  --in-line-strong: rgba(255, 255, 255, 0.13);
+  --in-text:        #F3F5F8;
+  --in-text-2:      #A9B2BF;
+  --in-text-3:      #8A94A2;
+  --in-blue:        #2F80ED;
+  --in-blue-text:   #6CB4FF;
+  --in-green:       #34D27B;
+  --in-amber:       #F4B740;
+  --in-red:         #F0605D;
+  --in-off:         #3A3E45;
 }
 
 /* ═══════════════════════════════════════════════

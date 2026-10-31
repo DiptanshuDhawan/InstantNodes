@@ -187,6 +187,26 @@ function readStoredTasks(sessionId) {
   }
 }
 
+// The account's running lab when this browser has no record of it (another device, or
+// storage was cleared), in the stored-session shape; null if it runs another lab or none.
+function findServerSession(slug) {
+  return api.getProgress()
+    .then((progress) => {
+      const active = progress?.active_session;
+      if (!active || active.lab_slug !== slug || !isValidSessionId(active.session_id)) return null;
+      const startedAt = Date.parse(active.started_at);
+      return {
+        session_id: active.session_id,
+        version: SESSION_STORAGE_VERSION,
+        runtime: SESSION_RUNTIME,
+        slug,
+        generation: active.generation ?? null,
+        ...(Number.isFinite(startedAt) ? { startedAt } : {}),
+      };
+    })
+    .catch(() => null);
+}
+
 export function useLabSession(slug) {
   const [lab, setLab] = useState(null);
   const [allLabs, setAllLabs] = useState([]);
@@ -390,7 +410,11 @@ export function useLabSession(slug) {
         setPassedTaskIds([]);
 
         stored = readStoredSession(slug);
-        if (!stored) return null;
+        return stored || findServerSession(slug);
+      })
+      .then((found) => {
+        if (cancelled || operationTokenRef.current !== operationToken || !found) return null;
+        stored = found;
 
         setIsBooting(true);
         setBootOperation('restoring');
@@ -838,12 +862,8 @@ export function useLabSession(slug) {
 
       setGradeReport(report);
       if (report.passed) {
+        // The result is stored with the account on the server (see /api/progress).
         setShowCompletionModal(true);
-        try {
-          localStorage.setItem(`netlabx_grade_${slug}`, '100');
-        } catch {
-          // Ignore unavailable storage.
-        }
       } else {
         // Open the first unfinished task so its findings are visible.
         const firstFailed = (report.tasks || []).find(

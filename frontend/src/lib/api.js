@@ -63,6 +63,17 @@ function getErrorDetail(payload) {
   return null;
 }
 
+// A message for people: the API's own explanation, or what to do when it did not answer.
+export function apiErrorMessage(error, fallback = 'Something went wrong. Try again.') {
+  if (error instanceof ApiError) {
+    if (error.status == null) {
+      return 'The lab server did not respond. Check that it is running, then try again.';
+    }
+    return getErrorDetail(error.payload) || fallback;
+  }
+  return fallback;
+}
+
 async function readPayload(response) {
   if (typeof response.text === 'function') {
     const text = await response.text();
@@ -81,14 +92,21 @@ async function readPayload(response) {
   return null;
 }
 
-async function requestJson(path, { fallbackMessage, ...options } = {}) {
+async function requestJson(path, { fallbackMessage, json, ...options } = {}) {
   const url = buildUrl(path);
   const controller = new AbortController();
   const timeoutId = setTimeout(() => controller.abort(), REQUEST_TIMEOUT_MS);
   let response;
 
+  // The sign-in cookie lives on the API host, so every call includes credentials.
+  const init = { credentials: 'include', ...options, signal: controller.signal };
+  if (json !== undefined) {
+    init.headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
+    init.body = JSON.stringify(json);
+  }
+
   try {
-    response = await fetch(url, { ...options, signal: controller.signal });
+    response = await fetch(url, init);
   } catch (error) {
     const message = error?.name === 'AbortError'
       ? `${fallbackMessage || 'Request failed'}: request timed out`
@@ -120,6 +138,47 @@ async function requestJson(path, { fallbackMessage, ...options } = {}) {
 }
 
 export const api = {
+  // Accounts. The API sets an HttpOnly session cookie; these return { user }.
+  async getMe() {
+    return requestJson('/api/auth/me', { fallbackMessage: 'Failed to load your account' });
+  },
+
+  async register({ name, email, password }) {
+    return requestJson('/api/auth/register', {
+      method: 'POST',
+      json: { name, email, password },
+      fallbackMessage: 'Failed to create the account',
+    });
+  },
+
+  async login({ email, password }) {
+    return requestJson('/api/auth/login', {
+      method: 'POST',
+      json: { email, password },
+      fallbackMessage: 'Failed to sign in',
+    });
+  },
+
+  async logout({ everywhere = false } = {}) {
+    return requestJson(`/api/auth/logout${everywhere ? '?everywhere=true' : ''}`, {
+      method: 'POST',
+      fallbackMessage: 'Failed to sign out',
+    });
+  },
+
+  async changePassword({ currentPassword, newPassword }) {
+    return requestJson('/api/auth/password', {
+      method: 'POST',
+      json: { current_password: currentPassword, new_password: newPassword },
+      fallbackMessage: 'Failed to change the password',
+    });
+  },
+
+  // { labs: { [slug]: { attempts, best_percentage, completed, ... } }, active_session }
+  async getProgress() {
+    return requestJson('/api/progress', { fallbackMessage: 'Failed to load your progress' });
+  },
+
   async getLabs() {
     return requestJson('/api/labs/', { fallbackMessage: 'Failed to fetch labs' });
   },
