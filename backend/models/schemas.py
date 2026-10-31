@@ -99,3 +99,21 @@ class SessionStatusResponse(BaseModel):
     nodes: List[NodeStatus] = Field(default_factory=list)
     links: List[LinkStatus] = Field(default_factory=list)
     error: Optional[str] = None
+
+
+# Accounts.  Fields default to "" and allow more than the policy so that the API, not
+# pydantic, answers with a readable message; the limits only cap the request size.
+class RegisterRequest(BaseModel):
+    name: str = Field(default="", max_length=200)
+    email: str = Field(default="", max_length=320)
+    password: str = Field(default="", max_length=1024)
+
+
+class LoginRequest(BaseModel):
+    email: str = Field(default="", max_length=320)
+    password: str = Field(default="", max_length=1024)
+
+
+class PasswordChangeRequest(BaseModel):
+    current_password: str = Field(default="", max_length=1024)
+    new_password: str = Field(default="", max_length=1024)

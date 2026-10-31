@@ -8,6 +8,9 @@ services:
       DATABASE_PATH: /data/netlabx.db
       LEGACY_DATABASE_PATH: /legacy-data/netlabx.db
       LABS_DIR: /app/labs
+      # Frontend origins allowed to call the API with the sign-in cookie (see README, Accounts).
+      CORS_ORIGINS: ${CORS_ORIGINS:-http://localhost:3000,http://127.0.0.1:3000}
+      COOKIE_SECURE: ${COOKIE_SECURE:-false}
     volumes:
       - netlabx-data:/data
       - ./backend/db:/legacy-data:ro

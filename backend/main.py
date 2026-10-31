@@ -4,12 +4,13 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import JSONResponse
 
 from db.database import get_db
-from routers import grading, labs, sessions, terminal
+from routers import auth, grading, labs, progress, sessions, terminal
+from services.auth import ALLOWED_ORIGINS, browser_origin_allowed
 
 logger = logging.getLogger(__name__)
 
@@ -19,16 +20,36 @@ app = FastAPI(
     version="1.0.0",
 )
 
-# Allow the browser-based frontend to call this API.
+_SAFE_METHODS = frozenset({"GET", "HEAD", "OPTIONS"})
+
+
+# Requests that change data must come from a listed frontend origin when a browser sends
+# them (the sign-in cookie is attached automatically, so this blocks cross-site forms).
+# Registered before CORSMiddleware, so CORS stays the outer layer and answers preflights.
+@app.middleware("http")
+async def reject_unlisted_origins(request: Request, call_next):
+    if request.method not in _SAFE_METHODS and not browser_origin_allowed(
+        request.headers.get("origin")
+    ):
+        return JSONResponse(
+            status_code=403, content={"detail": "This website is not allowed to use the API."}
+        )
+    return await call_next(request)
+
+
+# The browser frontend calls this API with the sign-in cookie, so origins are listed
+# explicitly (CORS_ORIGINS); a wildcard cannot be combined with credentials safely.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "OPTIONS"],
+    allow_headers=["Content-Type"],
 )
 
 # Register all routers.
+app.include_router(auth.router)
+app.include_router(progress.router)
 app.include_router(labs.router)
 app.include_router(sessions.router)
 app.include_router(grading.router)

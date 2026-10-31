@@ -3,9 +3,10 @@ import json
 import os
 from typing import List, Optional
 
-from fastapi import APIRouter, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from db.database import get_db
+from services.auth import current_user
 from services.grading_service import grade_session
 from simulator import InvalidRuntimeState, RuntimeNotFound, SimulatorError, manager
 
@@ -16,7 +17,7 @@ LABS_DIR = os.getenv(
 )
 
 
-def _get_session(session_id: int) -> dict:
+def _get_session(session_id: int, user: dict) -> dict:
     conn = get_db()
     try:
         row = conn.execute(
@@ -24,9 +25,9 @@ def _get_session(session_id: int) -> dict:
             SELECT s.*, l.slug AS lab_slug, l.id AS lab_id
             FROM lab_sessions s
             JOIN labs l ON s.lab_id = l.id
-            WHERE s.id = ?
+            WHERE s.id = ? AND s.user_id = ?
             """,
-            (session_id,),
+            (session_id, user["id"]),
         ).fetchone()
     finally:
         conn.close()
@@ -74,16 +75,19 @@ def _run_grade(session: dict, skip_tasks: list = None) -> dict:
 
 
 @router.post("/{session_id}")
-async def grade_lab(session_id: int):
-    session = _get_session(session_id)
+async def grade_lab(session_id: int, user: dict = Depends(current_user)):
+    session = _get_session(session_id, user)
     report = _run_grade(session)
 
     conn = get_db()
     try:
         conn.execute(
             """
-            INSERT INTO lab_results (session_id, lab_id, score, max_score, results_json)
-            VALUES (?, ?, ?, ?, ?)
+            INSERT INTO lab_results (
+                session_id, lab_id, score, max_score, results_json,
+                user_id, passed, percentage
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
                 session_id,
@@ -91,6 +95,9 @@ async def grade_lab(session_id: int):
                 report["total_earned"],
                 report["total_possible"],
                 json.dumps(report),
+                user["id"],
+                1 if report.get("passed") else 0,
+                report.get("percentage"),
             ),
         )
         conn.execute(
@@ -106,6 +113,7 @@ async def grade_lab(session_id: int):
 async def grade_incremental(
     session_id: int,
     already_passed: Optional[List[int]] = Query(None),
+    user: dict = Depends(current_user),
 ):
-    session = _get_session(session_id)
+    session = _get_session(session_id, user)
     return _run_grade(session, skip_tasks=already_passed or [])

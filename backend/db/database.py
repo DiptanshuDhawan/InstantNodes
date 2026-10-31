@@ -116,6 +116,10 @@ def _lab_session_columns(cursor: sqlite3.Cursor) -> set[str]:
     return {row["name"] for row in cursor.execute("PRAGMA table_info(lab_sessions)")}
 
 
+def _table_columns(cursor: sqlite3.Cursor, table: str) -> set[str]:
+    return {row["name"] for row in cursor.execute(f"PRAGMA table_info({table})")}
+
+
 def _migrate_lab_sessions(cursor: sqlite3.Cursor) -> None:
     """Add native-runtime fields without removing legacy project metadata."""
     columns = _lab_session_columns(cursor)
@@ -126,6 +130,25 @@ def _migrate_lab_sessions(cursor: sqlite3.Cursor) -> None:
             "ALTER TABLE lab_sessions "
             "ADD COLUMN generation INTEGER NOT NULL DEFAULT 1"
         )
+    if "user_id" not in columns:
+        cursor.execute(
+            "ALTER TABLE lab_sessions "
+            "ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        )
+
+
+def _migrate_lab_results(cursor: sqlite3.Cursor) -> None:
+    """Link grade results to accounts; rows from before accounts keep NULL users."""
+    columns = _table_columns(cursor, "lab_results")
+    if "user_id" not in columns:
+        cursor.execute(
+            "ALTER TABLE lab_results "
+            "ADD COLUMN user_id INTEGER REFERENCES users(id) ON DELETE SET NULL"
+        )
+    if "passed" not in columns:
+        cursor.execute("ALTER TABLE lab_results ADD COLUMN passed INTEGER")
+    if "percentage" not in columns:
+        cursor.execute("ALTER TABLE lab_results ADD COLUMN percentage REAL")
 
 
 def _is_clearly_native_runtime_id(value: Any) -> bool:
@@ -265,9 +288,40 @@ def init_db() -> None:
                 results_json TEXT,
                 graded_at DATETIME DEFAULT CURRENT_TIMESTAMP
             );
+
+            -- Accounts.  Emails are stored lower-case; passwords as scrypt hashes.
+            CREATE TABLE IF NOT EXISTS users (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                email TEXT NOT NULL UNIQUE,
+                name TEXT NOT NULL,
+                password_hash TEXT NOT NULL,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                password_changed_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                last_login_at DATETIME
+            );
+
+            -- Sign-in sessions.  Only the SHA-256 hash of the cookie token is stored.
+            CREATE TABLE IF NOT EXISTS auth_sessions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+                token_hash TEXT NOT NULL UNIQUE,
+                created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                expires_at DATETIME NOT NULL,
+                last_seen_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+                user_agent TEXT
+            );
             """
         )
         _migrate_lab_sessions(cursor)
+        _migrate_lab_results(cursor)
+        cursor.executescript(
+            """
+            CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id);
+            CREATE INDEX IF NOT EXISTS idx_lab_sessions_user ON lab_sessions(user_id, status);
+            CREATE INDEX IF NOT EXISTS idx_lab_results_user ON lab_results(user_id, lab_id);
+            """
+        )
+        cursor.execute("DELETE FROM auth_sessions WHERE expires_at <= datetime('now')")
         stopped_count = _stop_stale_native_sessions(cursor)
         synced_count = _sync_labs(cursor)
         connection.commit()

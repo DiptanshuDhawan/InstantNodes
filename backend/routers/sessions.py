@@ -1,9 +1,10 @@
 from pathlib import Path
 import os
 
-from fastapi import APIRouter, HTTPException
+from fastapi import APIRouter, Depends, HTTPException
 
 from db.database import get_db
+from services.auth import current_user
 from simulator import InvalidRuntimeState, SimulatorError, manager
 
 
@@ -33,6 +34,41 @@ def _mark_stopped(session_id: int) -> None:
         conn.close()
 
 
+def _owned_session(session_id: int, user: dict):
+    """The session row if it belongs to ``user``; 404 otherwise (also for other users)."""
+    conn = get_db()
+    try:
+        row = conn.execute(
+            """
+            SELECT s.*, l.slug AS lab_slug
+            FROM lab_sessions s JOIN labs l ON s.lab_id = l.id
+            WHERE s.id = ? AND s.user_id = ?
+            """,
+            (session_id, user["id"]),
+        ).fetchone()
+    finally:
+        conn.close()
+    if not row:
+        raise HTTPException(status_code=404, detail="Session not found")
+    return row
+
+
+def _stop_running_labs(user_id: int) -> None:
+    """One running lab per account: free the runtimes of the user's earlier labs."""
+    conn = get_db()
+    try:
+        rows = conn.execute(
+            "SELECT id, runtime_id, gns3_project_id FROM lab_sessions "
+            "WHERE user_id = ? AND status IN ('running', 'graded')",
+            (user_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    for row in rows:
+        manager.remove(_row_runtime_id(row))
+        _mark_stopped(row["id"])
+
+
 def _stopped_status(session_id: int, runtime_id: str = None, generation: int = None) -> dict:
     result = {
         "session_id": session_id,
@@ -49,7 +85,7 @@ def _stopped_status(session_id: int, runtime_id: str = None, generation: int = N
 
 
 @router.post("/start/{lab_slug}")
-async def start_lab(lab_slug: str):
+async def start_lab(lab_slug: str, user: dict = Depends(current_user)):
     conn = get_db()
     try:
         lab_row = conn.execute(
@@ -62,6 +98,7 @@ async def start_lab(lab_slug: str):
 
     lab = dict(lab_row)
     lab_yaml_path = os.path.join(LABS_DIR, lab_slug, "lab.yaml")
+    _stop_running_labs(user["id"])
     try:
         runtime = manager.create(slug=lab_slug, yaml_path=lab_yaml_path)
     except Exception as exc:
@@ -75,11 +112,14 @@ async def start_lab(lab_slug: str):
         cursor = conn.execute(
             """
             INSERT INTO lab_sessions (
-                lab_id, gns3_project_id, runtime_id, generation, status
+                lab_id, gns3_project_id, runtime_id, generation, status, user_id
             )
-            VALUES (?, ?, ?, ?, 'running')
+            VALUES (?, ?, ?, ?, 'running', ?)
             """,
-            (lab["id"], runtime.runtime_id, runtime.runtime_id, runtime.generation),
+            (
+                lab["id"], runtime.runtime_id, runtime.runtime_id, runtime.generation,
+                user["id"],
+            ),
         )
         session_id = cursor.lastrowid
         conn.commit()
@@ -106,34 +146,16 @@ async def start_lab(lab_slug: str):
 
 
 @router.post("/stop/{session_id}")
-async def stop_lab(session_id: int):
-    conn = get_db()
-    try:
-        session_row = conn.execute(
-            "SELECT * FROM lab_sessions WHERE id = ?", (session_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    if not session_row:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+async def stop_lab(session_id: int, user: dict = Depends(current_user)):
+    session_row = _owned_session(session_id, user)
     manager.remove(_row_runtime_id(session_row))
     _mark_stopped(session_id)
     return {"message": "Lab stopped. Server resources freed."}
 
 
 @router.get("/status/{session_id}")
-async def get_session_status(session_id: int):
-    conn = get_db()
-    try:
-        session_row = conn.execute(
-            "SELECT * FROM lab_sessions WHERE id = ?", (session_id,)
-        ).fetchone()
-    finally:
-        conn.close()
-    if not session_row:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+async def get_session_status(session_id: int, user: dict = Depends(current_user)):
+    session_row = _owned_session(session_id, user)
     session = dict(session_row)
     runtime_id = _row_runtime_id(session_row)
     runtime = manager.find(runtime_id)
@@ -162,22 +184,8 @@ async def get_session_status(session_id: int):
 
 
 @router.post("/reset/{session_id}")
-async def reset_session(session_id: int):
-    conn = get_db()
-    try:
-        session_row = conn.execute(
-            """
-            SELECT s.*, l.slug AS lab_slug
-            FROM lab_sessions s JOIN labs l ON s.lab_id = l.id
-            WHERE s.id = ?
-            """,
-            (session_id,),
-        ).fetchone()
-    finally:
-        conn.close()
-    if not session_row:
-        raise HTTPException(status_code=404, detail="Session not found")
-
+async def reset_session(session_id: int, user: dict = Depends(current_user)):
+    session_row = _owned_session(session_id, user)
     session = dict(session_row)
     if session["status"] not in ("running", "graded"):
         raise HTTPException(status_code=400, detail="Lab is not running")

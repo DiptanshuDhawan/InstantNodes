@@ -3,6 +3,7 @@ import asyncio
 from fastapi import APIRouter, WebSocket, WebSocketDisconnect
 
 from db.database import get_db
+from services.auth import COOKIE_NAME, browser_origin_allowed, user_for_token
 from simulator import InvalidRuntimeState, NodeNotFound, RuntimeNotFound, SimulatorError, manager
 from simulator.console import STOP_SENTINEL
 
@@ -65,12 +66,22 @@ async def terminal_websocket(
     node_name: str,
 ):
     await websocket.accept()
+    # Browsers send cookies with WebSocket handshakes and CORS does not apply to them, so
+    # check the page origin here (cross-site WebSocket hijacking) and then the account.
+    if not browser_origin_allowed(websocket.headers.get("origin")):
+        await _policy_close(websocket, "Origin not allowed")
+        return
+    user = await asyncio.to_thread(user_for_token, websocket.cookies.get(COOKIE_NAME))
+    if user is None:
+        await _policy_close(websocket, "Sign in to continue")
+        return
+
     conn = get_db()
     try:
         session_row = conn.execute(
             "SELECT gns3_project_id, runtime_id, status "
-            "FROM lab_sessions WHERE id = ?",
-            (session_id,),
+            "FROM lab_sessions WHERE id = ? AND user_id = ?",
+            (session_id, user["id"]),
         ).fetchone()
     finally:
         conn.close()
